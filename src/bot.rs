@@ -1,4 +1,4 @@
-use crate::sqlite::{Database, Seen};
+use crate::sqlite::{Database, Notification, Seen};
 use chrono::{DateTime, Utc};
 use chrono_humanize::{Accuracy, HumanTime, Tense};
 use irc::client::prelude::*;
@@ -108,6 +108,28 @@ fn check_seen(nick: &str, db: &Database) -> String {
     }
 }
 
+fn check_notification(nick: &str, db: &Database) -> Vec<String> {
+    let mut notification: Vec<_> = Vec::new();
+    match db.check_notification(nick) {
+        Ok(n) => {
+            for i in n {
+                let message = format!("{}, message from {}: {}", nick, i.via, i.message);
+                notification.push(message);
+                match db.remove_notification(i.id) {
+                    Err(err) => println!("SQL error checking notification: {}", err),
+                    _ => (),
+                }
+                if notification.len() > 1 {
+                    break;
+                }
+            }
+        }
+        Err(_err) => (),
+    }
+
+    notification
+}
+
 async fn privmsg(client: &Client, db: &Database, msg: Msg<'_>) {
     if msg.target.starts_with("#") {
         let mut finder = LinkFinder::new();
@@ -121,10 +143,21 @@ async fn privmsg(client: &Client, db: &Database, msg: Msg<'_>) {
         message: format!("saying: {}", &msg.content),
         time: Utc::now().to_rfc3339(),
     };
-
     if let Err(err) = db.add_seen(&entry) {
         println!("SQL error adding seen: {}", err);
     };
+
+    // HACK: check_notification only returns at most 2 notifications
+    // if user alice spams user bob with notifications, when bob speaks he will be spammed with all
+    // of those notifications at once (with some rate limiting provided by the irc crate), with
+    // this hack bob will only ever receive 2 messages when he speaks, giving some end user control
+    // for whether the channel is going to be spammed
+    // some ways to fix this: some persistence allowing for a user to receive any potential
+    // messages over pm, limit number of messages a user can receive, etc
+    let notification = check_notification(&msg.source, &db);
+    for n in notification {
+        client.send_privmsg(&msg.target, &n).unwrap();
+    }
 
     // past this point we only care about interactions with the bot
     let mut tokens = msg.content.split_whitespace();
@@ -143,6 +176,24 @@ async fn privmsg(client: &Client, db: &Database, msg: Msg<'_>) {
             let response = match tokens.next() {
                 Some(nick) => check_seen(nick, &db),
                 None => "Hint: seen <nick>".to_string(),
+            };
+            client.send_privmsg(&msg.target, &response).unwrap();
+        }
+        Some(c) if c == "tell" => {
+            let response = match tokens.next() {
+                Some(nick) => {
+                    let entry = Notification {
+                        id: 0,
+                        recipient: nick.to_string(),
+                        via: msg.source.to_string(),
+                        message: tokens.as_str().to_string(),
+                    };
+                    if let Err(err) = db.add_notification(&entry) {
+                        println!("SQL error adding notification: {}", err);
+                    };
+                    format!("ok, I'll tell {} that", nick)
+                }
+                None => "Hint: tell <nick> <message".to_string(),
             };
             client.send_privmsg(&msg.target, &response).unwrap();
         }

@@ -1,3 +1,4 @@
+#![feature(str_split_whitespace_as_str)]
 use futures::prelude::*;
 use irc::client::prelude::*;
 mod bot;
