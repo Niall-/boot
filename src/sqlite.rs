@@ -15,6 +15,14 @@ impl Database {
             time        TEXT NOT NULL)",
             [],
         )?;
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS notifications (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            recipient   TEXT NOT NULL,
+            via        TEXT NOT NULL,
+            message     TEXT NOT NULL)",
+            [],
+        )?;
         Ok(Self { db })
     }
 
@@ -51,6 +59,49 @@ impl Database {
         }
         Ok(results.pop())
     }
+
+    pub fn add_notification(&self, entry: &Notification) -> Result<(), Error> {
+        self.db.execute(
+            "INSERT INTO notifications  (recipient, via, message)
+            VALUES                      (:recipient, :via, :message)",
+            params!(entry.recipient, entry.via, entry.message),
+        )?;
+
+        Ok(())
+    }
+
+    pub fn remove_notification(&self, id: u32) -> Result<(), Error> {
+        self.db.execute(
+            "DELETE FROM notifications
+            WHERE id = :id",
+            params!(id),
+        )?;
+
+        Ok(())
+    }
+
+    pub fn check_notification(&self, nick: &str) -> Result<Vec<Notification>, Error> {
+        let mut statement = self.db.prepare(
+            "SELECT id, recipient, via, message
+            FROM notifications
+            WHERE recipient LIKE :nick",
+        )?;
+        let rows = statement.query_map(params![nick], |r| {
+            Ok(Notification {
+                id: r.get(0)?,
+                recipient: r.get(1)?,
+                via: r.get(2)?,
+                message: r.get(3)?,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(r?);
+        }
+
+        Ok(results)
+    }
 }
 
 #[derive(Debug)]
@@ -58,4 +109,12 @@ pub struct Seen {
     pub username: String,
     pub message: String,
     pub time: String,
+}
+
+#[derive(Debug)]
+pub struct Notification {
+    pub id: u32,
+    pub recipient: String,
+    pub via: String,
+    pub message: String,
 }
