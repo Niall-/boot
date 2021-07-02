@@ -4,6 +4,7 @@ use chrono_humanize::{Accuracy, HumanTime, Tense};
 use irc::client::prelude::*;
 use linkify::{Link, LinkFinder, LinkKind};
 use webpage::{Webpage, WebpageOptions};
+use std::time::Duration;
 
 #[derive(Debug)]
 struct Msg<'a> {
@@ -87,7 +88,15 @@ async fn process_titles(client: &Client, msg: &Msg<'_>, links: Vec<Link<'_>>) {
 async fn fetch_title(url: String) -> Option<String> {
     //let response = reqwest::get(title).await.ok()?.text().await.ok()?;
     //let page = webpage::HTML::from_string(response, None);
-    let page = Webpage::from_url(&url, WebpageOptions::default());
+    let opt = WebpageOptions {
+        allow_insecure: true,
+        follow_location: true,
+        max_redirections: 10,
+        timeout: Duration::from_secs(10),
+        useragent: format!("Mozilla/5.0 boot-bot-rs/1.3.0"),
+    };
+
+    let page = Webpage::from_url(&url, opt);
     match page {
         Ok(page) => page.html.title,
         Err(_) => None,
@@ -195,6 +204,10 @@ async fn privmsg(client: &Client, db: &Database, msg: Msg<'_>) {
                 }
                 None => "Hint: tell <nick> <message".to_string(),
             };
+            client.send_privmsg(&msg.target, &response).unwrap();
+        }
+        Some(c) if c == "help" => {
+            let response = format!("Commands: repo | seen <nick> | tell <nick> <message>");
             client.send_privmsg(&msg.target, &response).unwrap();
         }
         _ => (),
