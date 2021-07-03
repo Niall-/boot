@@ -3,8 +3,8 @@ use chrono::{DateTime, Utc};
 use chrono_humanize::{Accuracy, HumanTime, Tense};
 use irc::client::prelude::*;
 use linkify::{Link, LinkFinder, LinkKind};
-use webpage::{Webpage, WebpageOptions};
 use std::time::Duration;
+use webpage::{Webpage, WebpageOptions};
 
 #[derive(Debug)]
 struct Msg<'a> {
@@ -98,7 +98,10 @@ async fn fetch_title(url: String) -> Option<String> {
 
     let page = Webpage::from_url(&url, opt);
     match page {
-        Ok(page) => page.html.title,
+        Ok(mut page) => match page.html.meta.get("og:title") {
+            Some(_) => page.html.meta.remove("og:title"),
+            _ => page.html.title,
+        },
         Err(_) => None,
     }
 }
