@@ -98,8 +98,8 @@ async fn fetch_title(url: String) -> Option<String> {
 
     let page = Webpage::from_url(&url, opt);
     match page {
-        Ok(mut page) => match page.html.meta.get("og:title") {
-            Some(_) => page.html.meta.remove("og:title"),
+        Ok(mut page) => match page.html.meta.remove("og:title") {
+            Some(t) => Some(t),
             _ => page.html.title,
         },
         Err(_) => None,
@@ -175,7 +175,7 @@ async fn privmsg(client: &Client, db: &Database, msg: Msg<'_>) {
     let mut tokens = msg.content.split_whitespace();
     let next = tokens.next();
     match next {
-        Some(n) if !n.starts_with(&msg.our_nick.to_lowercase()) => return,
+        Some(n) if !n.to_lowercase().starts_with(&msg.our_nick.to_lowercase()) => return,
         _ => (),
     }
 
