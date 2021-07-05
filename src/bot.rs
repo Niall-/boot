@@ -93,16 +93,27 @@ async fn fetch_title(url: String) -> Option<String> {
         follow_location: true,
         max_redirections: 10,
         timeout: Duration::from_secs(10),
+        // a legitimate user agent is necessary for some sites (twitter)
         useragent: format!("Mozilla/5.0 boot-bot-rs/1.3.0"),
     };
 
     let page = Webpage::from_url(&url, opt);
+    let mut title: Option<String> = None;
+    let mut og_title: Option<String> = None;
     match page {
-        Ok(mut page) => match page.html.meta.remove("og:title") {
-            Some(t) => Some(t),
-            _ => page.html.title,
-        },
-        Err(_) => None,
+        Ok(mut page) => {
+            title = page.html.title;
+            og_title = page.html.meta.remove("og:title");
+        }
+        Err(_) => (),
+    }
+
+    match title {
+        // youtube is inconsistent, the best option here would be to use the api, an invidious api,
+        // or possibly sed youtube.com with an invidious instance
+        Some(t) if t == "YouTube" => og_title,
+        Some(t) if t == "Pleroma" => og_title,
+        _ => title,
     }
 }
 
