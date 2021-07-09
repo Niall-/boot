@@ -7,27 +7,29 @@ use linkify::{Link, LinkFinder, LinkKind};
 use std::time::Duration;
 use webpage::{Webpage, WebpageOptions};
 
-pub async fn process_titles(msg: &Msg<'_>, links: Vec<Link<'_>>) {
-    let urls: Vec<_> = links.into_iter().map(|x| x.as_str().to_string()).collect();
-
+pub async fn process_titles(links: Vec<String>) -> Vec<String> {
     // the following is adapted from
     // https://stackoverflow.com/questions/63434977/how-can-i-spawn-asynchronous-methods-in-a-loop
     // it's also completely overkill, I think the rest of the bot will operate mostly synchronously
     // except in this one extremely specific instance where somebody pasted multiple urls to irc
-    let tasks: Vec<_> = urls
+    let tasks: Vec<_> = links
         .into_iter()
         .map(|l| tokio::spawn(async { fetch_title(l).await }))
         .collect();
 
+    let mut titles = Vec::new();
     for task in tasks {
         match task.await.unwrap() {
             Some(title) => {
                 let response = format!("↪ {}", title);
+                titles.push(response);
                 //client.send_privmsg(msg.target, response).unwrap();
             }
             None => (),
         }
     }
+
+    titles
 }
 
 async fn fetch_title(url: String) -> Option<String> {

@@ -59,7 +59,16 @@ async fn privmsg(msg: Msg<'_>, tx: mpsc::Sender<BotCommand>) {
         let mut finder = LinkFinder::new();
         finder.kinds(&[LinkKind::Url]);
         let links: Vec<_> = finder.links(&msg.content).collect();
-        process_titles(&msg, links).await;
+        let urls: Vec<_> = links.into_iter().map(|x| x.as_str().to_string()).collect();
+        let command = BotCommand::new(
+            format!(""),
+            msg.target.to_string(),
+            "links".to_string(),
+            Low,
+            Some(urls),
+        );
+        tx.send(command).await.unwrap();
+        //process_titles(&msg, links).await;
     }
 
     //let entry = Seen {
@@ -105,6 +114,7 @@ async fn privmsg(msg: Msg<'_>, tx: mpsc::Sender<BotCommand>) {
                 msg.target.to_string(),
                 "privmsg".to_string(),
                 High,
+                None,
             );
             tx.send(command).await.unwrap();
         }
@@ -114,6 +124,7 @@ async fn privmsg(msg: Msg<'_>, tx: mpsc::Sender<BotCommand>) {
                 msg.target.to_string(),
                 "privmsg".to_string(),
                 High,
+                None,
             );
             tx.send(command).await.unwrap();
         }

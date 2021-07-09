@@ -18,14 +18,22 @@ pub struct BotCommand {
     pub target: String,
     pub plugin: String,
     pub priority: Priority,
+    pub links: Option<Vec<String>>,
 }
 impl BotCommand {
-    fn new(message: String, target: String, plugin: String, priority: Priority) -> BotCommand {
+    fn new(
+        message: String,
+        target: String,
+        plugin: String,
+        priority: Priority,
+        links: Option<Vec<String>>,
+    ) -> BotCommand {
         BotCommand {
             message,
             target,
             plugin,
             priority,
+            links,
         }
     }
 }
@@ -57,12 +65,35 @@ async fn main() -> Result<(), failure::Error> {
     client.identify()?;
 
     let (tx, mut rx) = mpsc::channel::<BotCommand>(32);
+    let tx2 = tx.clone();
 
     tokio::spawn(async move { run_bot(stream, &"boot", tx.clone()).await });
 
     while let Some(cmd) = rx.recv().await {
-        match cmd.plugin {
+        match &cmd.plugin {
             p if p == "privmsg" => client.send_privmsg(cmd.target, cmd.message).unwrap(),
+            p if p == "links" => match cmd.links {
+                Some(u) => {
+                    let tx2 = tx2.clone();
+                    tokio::spawn(async move {
+                        let titles = bot::process_titles(u).await;
+                        for t in titles {
+                            let cmd = BotCommand::new(
+                                t.to_string(),
+                                "#Ω".to_string(),
+                                "titles".to_string(),
+                                Priority::Normal,
+                                None,
+                            );
+                            tx2.send(cmd).await.unwrap();
+                        }
+                    });
+                }
+                None => (),
+            },
+            p if p == "titles" => {
+                client.send_privmsg(cmd.target, cmd.message).unwrap();
+            }
             _ => (),
         }
         //println!("Got command: {:?}", cmd);
