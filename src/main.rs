@@ -5,7 +5,7 @@ use irc::client::prelude::*;
 mod bot;
 mod messages;
 mod sqlite;
-use crate::bot::check_seen;
+use crate::bot::{check_notification, check_seen};
 use crate::sqlite::Database;
 use crate::sqlite::{Notification, Seen};
 use irc::client::ClientStream;
@@ -60,7 +60,7 @@ async fn main() -> Result<(), failure::Error> {
     let path = "./database.sqlite";
     let db = Database::open(&path)?;
     let mut client = Client::new("config.toml").await?;
-    let mut stream = client.stream()?;
+    let stream = client.stream()?;
     client.identify()?;
 
     let (tx, mut rx) = mpsc::channel::<BotCommand>(32);
@@ -97,7 +97,6 @@ async fn main() -> Result<(), failure::Error> {
             }
             p if p == "add-seen" => match &cmd.seen {
                 Some(entry) => {
-                    println!("add seen");
                     if let Err(err) = db.add_seen(&entry) {
                         println!("SQL error adding seen: {}", err);
                     };
@@ -107,6 +106,20 @@ async fn main() -> Result<(), failure::Error> {
             p if p == "check-seen" => {
                 let response = check_seen(&cmd.message, &db);
                 client.send_privmsg(cmd.target, response).unwrap();
+            }
+            p if p == "add-notification" => match &cmd.notification {
+                Some(entry) => {
+                    if let Err(err) = db.add_notification(&entry) {
+                        println!("SQL error adding notification: {}", err);
+                    }
+                }
+                None => println!("Error! add-notification but Notification is empty"),
+            },
+            p if p == "check-notification" => {
+                let notifications = check_notification(&cmd.message, &db);
+                for n in notifications {
+                    client.send_privmsg(&cmd.target, &n).unwrap();
+                }
             }
             _ => (),
         }

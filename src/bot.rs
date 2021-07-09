@@ -78,7 +78,7 @@ pub fn check_seen(nick: &str, db: &Database) -> String {
     }
 }
 
-fn check_notification(nick: &str, db: &Database) -> Vec<String> {
+pub fn check_notification(nick: &str, db: &Database) -> Vec<String> {
     let mut notification: Vec<_> = Vec::new();
     match db.check_notification(nick) {
         Ok(n) => {

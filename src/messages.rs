@@ -104,6 +104,15 @@ async fn privmsg(msg: Msg<'_>, tx: mpsc::Sender<BotCommand>) {
     //for n in notification {
     //    //client.send_privmsg(&msg.target, &n).unwrap();
     //}
+    let command = BotCommand::new(
+        msg.source.to_string(),
+        msg.target.to_string(),
+        "check-notification".to_string(),
+        None,
+        None,
+        None,
+    );
+    tx.send(command).await.unwrap();
 
     // past this point we only care about interactions with the bot
     let mut tokens = msg.content.split_whitespace();
@@ -168,11 +177,11 @@ async fn privmsg(msg: Msg<'_>, tx: mpsc::Sender<BotCommand>) {
                     );
                     tx.send(command).await.unwrap();
                 }
-            };
+            }
             //client.send_privmsg(&msg.target, &response).unwrap();
         }
         Some(c) if c == "tell" => {
-            let response = match tokens.next() {
+            match tokens.next() {
                 Some(nick) => {
                     let entry = Notification {
                         id: 0,
@@ -180,13 +189,40 @@ async fn privmsg(msg: Msg<'_>, tx: mpsc::Sender<BotCommand>) {
                         via: msg.source.to_string(),
                         message: tokens.as_str().to_string(),
                     };
+                    let command = BotCommand::new(
+                        format!(""),
+                        format!(""),
+                        "add-notification".to_string(),
+                        None,
+                        None,
+                        Some(entry),
+                    );
+                    tx.send(command).await.unwrap();
                     //if let Err(err) = db.add_notification(&entry) {
                     //    println!("SQL error adding notification: {}", err);
                     //};
-                    format!("ok, I'll tell {} that", nick)
+                    let command = BotCommand::new(
+                        format!("ok, I'll tell {} that", nick),
+                        msg.target.to_string(),
+                        "privmsg".to_string(),
+                        None,
+                        None,
+                        None,
+                    );
+                    tx.send(command).await.unwrap();
                 }
-                None => "Hint: tell <nick> <message".to_string(),
-            };
+                None => {
+                    let command = BotCommand::new(
+                        format!("Hint: tell <nick> <message"),
+                        msg.target.to_string(),
+                        "privmsg".to_string(),
+                        None,
+                        None,
+                        None,
+                    );
+                    tx.send(command).await.unwrap();
+                }
+            }
             //client.send_privmsg(&msg.target, &response).unwrap();
         }
         _ => (),
