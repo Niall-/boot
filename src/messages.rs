@@ -1,7 +1,6 @@
 use crate::bot::process_titles;
 use crate::sqlite::{Database, Notification, Seen};
 use crate::BotCommand;
-use crate::Priority::*;
 use chrono::{DateTime, Utc};
 use chrono_humanize::{Accuracy, HumanTime, Tense};
 use irc::client::prelude::*;
@@ -45,7 +44,11 @@ pub async fn process_message(current_nick: &str, message: &Message, tx: mpsc::Se
             .await
         }
         Command::KICK(channel, user, _text) => {
-            kick(Msg::new(current_nick, source.unwrap(), user, channel)).await
+            kick(
+                Msg::new(current_nick, source.unwrap(), user, channel),
+                tx.clone(),
+            )
+            .await
         }
         Command::INVITE(nick, channel) => {
             invite(Msg::new(current_nick, source.unwrap(), nick, channel)).await
@@ -64,18 +67,28 @@ async fn privmsg(msg: Msg<'_>, tx: mpsc::Sender<BotCommand>) {
             format!(""),
             msg.target.to_string(),
             "links".to_string(),
-            Low,
             Some(urls),
+            None,
+            None,
         );
         tx.send(command).await.unwrap();
         //process_titles(&msg, links).await;
     }
 
-    //let entry = Seen {
-    //    username: msg.source.to_string(),
-    //    message: format!("saying: {}", &msg.content),
-    //    time: Utc::now().to_rfc3339(),
-    //};
+    let entry = Seen {
+        username: msg.source.to_string(),
+        message: format!("saying: {}", &msg.content),
+        time: Utc::now().to_rfc3339(),
+    };
+    let command = BotCommand::new(
+        format!(""),
+        format!(""),
+        "add-seen".to_string(),
+        None,
+        Some(entry),
+        None,
+    );
+    tx.send(command).await.unwrap();
     //if let Err(err) = db.add_seen(&entry) {
     //    println!("SQL error adding seen: {}", err);
     //};
@@ -113,7 +126,8 @@ async fn privmsg(msg: Msg<'_>, tx: mpsc::Sender<BotCommand>) {
                 format!("https://github.com/niall-/boot"),
                 msg.target.to_string(),
                 "privmsg".to_string(),
-                High,
+                None,
+                None,
                 None,
             );
             tx.send(command).await.unwrap();
@@ -123,15 +137,37 @@ async fn privmsg(msg: Msg<'_>, tx: mpsc::Sender<BotCommand>) {
                 format!("Commands: repo | seen <nick> | tell <nick> <message>"),
                 msg.target.to_string(),
                 "privmsg".to_string(),
-                High,
+                None,
+                None,
                 None,
             );
             tx.send(command).await.unwrap();
         }
         Some(c) if c == "seen" => {
-            let response = match tokens.next() {
-                Some(nick) => "".to_string(), //check_seen(nick, &db),
-                None => "Hint: seen <nick>".to_string(),
+            match tokens.next() {
+                Some(nick) => {
+                    //"".to_string(), //check_seen(nick, &db),
+                    let command = BotCommand::new(
+                        nick.to_string(),
+                        msg.target.to_string(),
+                        "check-seen".to_string(),
+                        None,
+                        None,
+                        None,
+                    );
+                    tx.send(command).await.unwrap();
+                }
+                None => {
+                    let command = BotCommand::new(
+                        format!("Hint: seen <nick>"),
+                        msg.target.to_string(),
+                        "privmsg".to_string(),
+                        None,
+                        None,
+                        None,
+                    );
+                    tx.send(command).await.unwrap();
+                }
             };
             //client.send_privmsg(&msg.target, &response).unwrap();
         }
@@ -157,12 +193,21 @@ async fn privmsg(msg: Msg<'_>, tx: mpsc::Sender<BotCommand>) {
     }
 }
 
-async fn kick(_msg: Msg<'_>) {
-    //let entry = Seen {
-    //    username: msg.source.to_string(),
-    //    message: format!("being kicked from {}", &msg.target),
-    //    time: Utc::now().to_rfc3339(),
-    //};
+async fn kick(msg: Msg<'_>, tx: mpsc::Sender<BotCommand>) {
+    let entry = Seen {
+        username: msg.source.to_string(),
+        message: format!("being kicked from {}", &msg.target),
+        time: Utc::now().to_rfc3339(),
+    };
+    let command = BotCommand::new(
+        format!(""),
+        format!(""),
+        "add-seen".to_string(),
+        None,
+        Some(entry),
+        None,
+    );
+    tx.send(command).await.unwrap();
 
     //if let Err(err) = db.add_seen(&entry) {
     //    println!("SQL error adding seen: {}", err);

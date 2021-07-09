@@ -64,7 +64,7 @@ async fn fetch_title(url: String) -> Option<String> {
     }
 }
 
-fn check_seen(nick: &str, db: &Database) -> String {
+pub fn check_seen(nick: &str, db: &Database) -> String {
     match db.check_seen(nick) {
         Ok(Some(p)) => {
             let time = Utc::now();
