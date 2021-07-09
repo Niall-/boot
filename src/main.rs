@@ -36,13 +36,13 @@ pub enum Priority {
     Low,
 }
 
-async fn run_bot(tx: mpsc::Sender<BotCommand>) -> Result<(), failure::Error> {
-    let mut client = Client::new("config.toml").await?;
-    let mut stream = client.stream()?;
-    client.identify()?;
-
+async fn run_bot(
+    mut stream: ClientStream,
+    current_nick: &str,
+    tx: mpsc::Sender<BotCommand>,
+) -> Result<(), failure::Error> {
     while let Some(message) = stream.next().await.transpose()? {
-        process_message(&client.current_nickname(), &message, tx.clone()).await;
+        process_message(current_nick, &message, tx.clone()).await;
     }
 
     Ok(())
@@ -52,12 +52,20 @@ async fn run_bot(tx: mpsc::Sender<BotCommand>) -> Result<(), failure::Error> {
 async fn main() -> Result<(), failure::Error> {
     //let path = "./database.sqlite";
     //let db = Database::open(&path)?;
+    let mut client = Client::new("config.toml").await?;
+    let mut stream = client.stream()?;
+    client.identify()?;
+
     let (tx, mut rx) = mpsc::channel::<BotCommand>(32);
 
-    tokio::spawn(async move { run_bot(tx.clone()).await });
+    tokio::spawn(async move { run_bot(stream, &"boot", tx.clone()).await });
 
     while let Some(cmd) = rx.recv().await {
-        println!("Got command: {:?}", cmd);
+        match cmd.plugin {
+            p if p == "privmsg" => client.send_privmsg(cmd.target, cmd.message).unwrap(),
+            _ => (),
+        }
+        //println!("Got command: {:?}", cmd);
     }
 
     Ok(())
