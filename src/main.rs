@@ -3,12 +3,24 @@
 use futures::prelude::*;
 use irc::client::prelude::*;
 mod bot;
-use bot::process_message;
+mod messages;
 mod sqlite;
 use crate::sqlite::Database;
 use irc::client::ClientStream;
+use messages::process_message;
 use std::thread;
 use std::time::Duration;
+
+pub struct Commands {
+    pub message: String,
+    pub plugin: String,
+    pub priority: Priority,
+}
+pub enum Priority {
+    High,
+    Normal,
+    Low,
+}
 
 async fn run_bot() -> Result<(), failure::Error> {
     let mut client = Client::new("config.toml").await?;
