@@ -75,12 +75,13 @@ async fn main() -> Result<(), failure::Error> {
             p if p == "links" => match cmd.links {
                 Some(u) => {
                     let tx2 = tx2.clone();
+                    let target = cmd.target.to_string().clone();
                     tokio::spawn(async move {
                         let titles = bot::process_titles(u).await;
                         for t in titles {
                             let cmd = BotCommand::new(
                                 t.to_string(),
-                                "#Ω".to_string(),
+                                target.to_string(),
                                 "titles".to_string(),
                                 None,
                                 None,
