@@ -1,10 +1,13 @@
 use crate::bot::process_titles;
 use crate::sqlite::{Database, Notification, Seen};
+use crate::BotCommand;
+use crate::Priority::*;
 use chrono::{DateTime, Utc};
 use chrono_humanize::{Accuracy, HumanTime, Tense};
 use irc::client::prelude::*;
 use linkify::{Link, LinkFinder, LinkKind};
 use std::time::Duration;
+use tokio::sync::mpsc;
 use webpage::{Webpage, WebpageOptions};
 
 #[derive(Debug)]
@@ -29,18 +32,16 @@ impl<'a> Msg<'a> {
     }
 }
 
-pub async fn process_message(current_nick: &str, message: &Message) {
+pub async fn process_message(current_nick: &str, message: &Message, tx: mpsc::Sender<BotCommand>) {
     let source = message.source_nickname();
     let target = message.response_target();
 
     match &message.command {
         Command::PRIVMSG(_target, message) => {
-            privmsg(Msg::new(
-                current_nick,
-                source.unwrap(),
-                target.unwrap(),
-                message,
-            ))
+            privmsg(
+                Msg::new(current_nick, source.unwrap(), target.unwrap(), message),
+                tx.clone(),
+            )
             .await
         }
         Command::KICK(channel, user, _text) => {
@@ -53,7 +54,7 @@ pub async fn process_message(current_nick: &str, message: &Message) {
     };
 }
 
-async fn privmsg(msg: Msg<'_>) {
+async fn privmsg(msg: Msg<'_>, tx: mpsc::Sender<BotCommand>) {
     if msg.target.starts_with("#") {
         let mut finder = LinkFinder::new();
         finder.kinds(&[LinkKind::Url]);
@@ -98,8 +99,24 @@ async fn privmsg(msg: Msg<'_>) {
 
     // i.e., 'boot: command'
     match tokens.next().map(|t| t.to_lowercase()) {
-        Some(c) if c == "repo" => (),
-        //client.send_privmsg(&msg.target, "https://github.com/niall-/boot").unwrap(),
+        Some(c) if c == "repo" => {
+            let command = BotCommand::new(
+                format!("https://github.com/niall-/boot"),
+                msg.target.to_string(),
+                "privmsg".to_string(),
+                High,
+            );
+            tx.send(command).await.unwrap();
+        }
+        Some(c) if c == "help" => {
+            let command = BotCommand::new(
+                format!("Commands: repo | seen <nick> | tell <nick> <message>"),
+                msg.target.to_string(),
+                "privmsg".to_string(),
+                High,
+            );
+            tx.send(command).await.unwrap();
+        }
         Some(c) if c == "seen" => {
             let response = match tokens.next() {
                 Some(nick) => "".to_string(), //check_seen(nick, &db),
@@ -123,10 +140,6 @@ async fn privmsg(msg: Msg<'_>) {
                 }
                 None => "Hint: tell <nick> <message".to_string(),
             };
-            //client.send_privmsg(&msg.target, &response).unwrap();
-        }
-        Some(c) if c == "help" => {
-            let response = format!("Commands: repo | seen <nick> | tell <nick> <message>");
             //client.send_privmsg(&msg.target, &response).unwrap();
         }
         _ => (),
