@@ -77,7 +77,7 @@ async fn process_titles(client: &Client, msg: &Msg<'_>, links: Vec<Link<'_>>) {
     for task in tasks {
         match task.await.unwrap() {
             Some(title) => {
-                let response = format!("↪ {}", title);
+                let response = format!("↪ {}", title.replace("\n", " "));
                 client.send_privmsg(msg.target, response).unwrap();
             }
             None => (),
