@@ -42,7 +42,8 @@ impl Database {
         let mut statement = self.db.prepare(
             "SELECT username, message, time
             FROM seen
-            WHERE username LIKE :username",
+            WHERE username = :username
+            COLLATE NOCASE",
         )?;
         let rows = statement.query_map(params![nick], |r| {
             Ok(Seen {
@@ -84,7 +85,8 @@ impl Database {
         let mut statement = self.db.prepare(
             "SELECT id, recipient, via, message
             FROM notifications
-            WHERE recipient LIKE :nick",
+            WHERE recipient = :nick
+            COLLATE NOCASE",
         )?;
         let rows = statement.query_map(params![nick], |r| {
             Ok(Notification {
