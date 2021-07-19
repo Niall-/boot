@@ -1,29 +1,24 @@
-use crate::messages::Msg;
-use crate::sqlite::{Database, Notification, Seen};
+use crate::sqlite::{Database};
 use chrono::{DateTime, Utc};
 use chrono_humanize::{Accuracy, HumanTime, Tense};
-use irc::client::prelude::*;
-use linkify::{Link, LinkFinder, LinkKind};
 use std::time::Duration;
 use webpage::{Webpage, WebpageOptions};
 
-pub async fn process_titles(links: Vec<String>) -> Vec<String> {
+pub async fn process_titles(links: Vec<(String, String)>) -> Vec<(String, String)> {
     // the following is adapted from
     // https://stackoverflow.com/questions/63434977/how-can-i-spawn-asynchronous-methods-in-a-loop
-    // it's also completely overkill, I think the rest of the bot will operate mostly synchronously
-    // except in this one extremely specific instance where somebody pasted multiple urls to irc
     let tasks: Vec<_> = links
         .into_iter()
-        .map(|l| tokio::spawn(async { fetch_title(l).await }))
+        .map(|(t, l)| tokio::spawn(async { fetch_title(t, l).await }))
         .collect();
 
     let mut titles = Vec::new();
     for task in tasks {
-        match task.await.unwrap() {
+        let fetched = task.await.unwrap();
+        match fetched.1 {
             Some(title) => {
-                let response = format!("↪ {}", title);
-                titles.push(response);
-                //client.send_privmsg(msg.target, response).unwrap();
+                let response = format!("↪ {}", title.replace("\n", " "));
+                titles.push((fetched.0, response));
             }
             None => (),
         }
@@ -32,7 +27,7 @@ pub async fn process_titles(links: Vec<String>) -> Vec<String> {
     titles
 }
 
-async fn fetch_title(url: String) -> Option<String> {
+async fn fetch_title(target: String, url: String) -> (String, Option<String>) {
     //let response = reqwest::get(title).await.ok()?.text().await.ok()?;
     //let page = webpage::HTML::from_string(response, None);
     let opt = WebpageOptions {
@@ -58,9 +53,9 @@ async fn fetch_title(url: String) -> Option<String> {
     match title {
         // youtube is inconsistent, the best option here would be to use the api, an invidious api,
         // or possibly sed youtube.com with an invidious instance
-        Some(t) if t == "YouTube" => og_title,
-        Some(t) if t == "Pleroma" => og_title,
-        _ => title,
+        Some(t) if t == "YouTube" => (target, og_title),
+        Some(t) if t == "Pleroma" => (target, og_title),
+        _ => (target, title),
     }
 }
 
