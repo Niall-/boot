@@ -26,14 +26,14 @@ impl Database {
         )?;
         db.execute(
             "CREATE TABLE IF NOT EXISTS locations (
-            name        TEXT PRIMARY KEY,
+            loc         TEXT PRIMARY KEY,
             lat         TEXT NOT NULL,
             lon         TEXT NOT NULL)",
             [],
         )?;
         db.execute(
             "CREATE TABLE IF NOT EXISTS weather (
-            user        TEXT PRIMARY KEY,
+            username    TEXT PRIMARY KEY,
             lat         TEXT NOT NULL,
             lon         TEXT NOT NULL)",
             [],
@@ -119,6 +119,40 @@ impl Database {
 
         Ok(results)
     }
+
+    pub fn add_location(&self, entry: &Location) -> Result<(), Error> {
+        self.db.execute(
+            "INSERT INTO locations      (loc, lat, lon)
+            VALUES                      (:loc, :lat, :lon)",
+            params!(entry.loc, entry.lat, entry.lon),
+        )?;
+
+        Ok(())
+    }
+
+    pub fn check_location(&self, loc: &str) -> Result<Option<Location>, Error> {
+        let mut statement = self.db.prepare(
+            "SELECT loc, lat, lon
+            FROM locations
+            WHERE loc = :loc
+            COLLATE NOCASE",
+        )?;
+        let rows = statement.query_map(params![loc], |r| {
+            Ok(Location {
+                loc: r.get(0)?,
+                lat: r.get(1)?,
+                lon: r.get(2)?,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(r?);
+        }
+
+        Ok(results.pop())
+    }
+
 }
 
 #[derive(Debug)]
@@ -134,4 +168,11 @@ pub struct Notification {
     pub recipient: String,
     pub via: String,
     pub message: String,
+}
+
+#[derive(Debug)]
+pub struct Location {
+    pub loc: String,
+    pub lat: String,
+    pub lon: String,
 }
