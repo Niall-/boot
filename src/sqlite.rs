@@ -20,8 +20,22 @@ impl Database {
             "CREATE TABLE IF NOT EXISTS notifications (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             recipient   TEXT NOT NULL,
-            via        TEXT NOT NULL,
+            via         TEXT NOT NULL,
             message     TEXT NOT NULL)",
+            [],
+        )?;
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS locations (
+            name        TEXT PRIMARY KEY,
+            lat         TEXT NOT NULL,
+            lon         TEXT NOT NULL)",
+            [],
+        )?;
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS weather (
+            user        TEXT PRIMARY KEY,
+            lat         TEXT NOT NULL,
+            lon         TEXT NOT NULL)",
             [],
         )?;
         Ok(Self { db })

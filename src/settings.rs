@@ -7,6 +7,7 @@ use std::path::Path;
 #[derive(Debug, Default, Deserialize)]
 pub struct BotConfig {
     pub db: Option<String>,
+    pub weather_api: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -29,6 +30,7 @@ impl Default for Settings {
         Self {
             bot: BotConfig {
                 db: None,
+                weather_api: None,
             },
             irc: IRCConfig {
                 ..IRCConfig::default()
