@@ -5,7 +5,7 @@ mod bot;
 mod messages;
 mod settings;
 mod sqlite;
-use crate::bot::{check_notification, check_seen};
+use crate::bot::{check_location, check_notification, check_seen};
 use crate::messages::Msg;
 use crate::settings::Settings;
 use crate::sqlite::Database;
@@ -106,6 +106,11 @@ async fn main() -> Result<(), failure::Error> {
                     Some(c) if c == "help" => {
                         let response = "Commands: repo | seen <nick> | tell <nick> <message>";
                         client.send_privmsg(msg.target, response).unwrap();
+                    }
+
+                    Some(c) if c == "loc" => {
+                        let loc = check_location(tokens.as_str(), &db);
+                        println!("location: {:?}", loc);
                     }
 
                     Some(c) if c == "seen" => match tokens.next() {

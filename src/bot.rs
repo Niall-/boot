@@ -1,7 +1,9 @@
-use crate::sqlite::Database;
+use crate::sqlite::{Database, Location};
 use chrono::{DateTime, Utc};
 use chrono_humanize::{Accuracy, HumanTime, Tense};
+use failure::Error;
 use std::time::Duration;
+use urlencoding::encode;
 use webpage::{Webpage, WebpageOptions};
 
 pub async fn process_titles(links: Vec<(String, String)>) -> Vec<(String, String)> {
@@ -93,4 +95,41 @@ pub fn check_notification(nick: &str, db: &Database) -> Vec<String> {
     }
 
     notification
+}
+
+pub fn check_location(loc: &str, db: &Database) -> Result<Option<Location>, Error> {
+    if let Ok(Some(l)) = db.check_location(loc) {
+        println!("in db");
+        return Ok(Some(l));
+    };
+
+    println!("not in db");
+    // TODO: add this to settings
+    let opt = WebpageOptions {
+        allow_insecure: true,
+        follow_location: true,
+        max_redirections: 10,
+        timeout: Duration::from_secs(10),
+        // a legitimate user agent is necessary for some sites (twitter)
+        useragent: format!("Mozilla/5.0 boot-bot-rs/1.3.0"),
+    };
+
+    // TODO: this throws an error when a city doesn't exist for a location (i.e., it's a county)
+    // TODO: nominatim has a strict limit of 1 request per second, while the channel I run the
+    // bot in most certainly won't exceed this limit and I don't think it's likely many channels
+    // will either (how many users are going to request weather before an op kicks the bot?)
+    // something should be done about this soon to respect nominatim's TOS
+    let url = format!(
+        "https://nominatim.openstreetmap.org/search?q={}&format=json&addressdetails=1&limit=1",
+        &encode(loc)
+    );
+
+    let page = Webpage::from_url(&url, opt)?;
+    let mut entry: Vec<Location> = serde_json::from_str(&page.html.text_content)?;
+
+    if let Err(err) = db.add_location(loc, &entry[0]) {
+        println!("SQL error adding location: {}", err);
+    };
+
+    Ok(entry.pop())
 }

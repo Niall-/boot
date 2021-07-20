@@ -1,6 +1,7 @@
 use failure::Error;
 use rusqlite::{params, Connection};
 use std::path::Path;
+use serde::{Deserialize};
 
 pub struct Database {
     db: Connection,
@@ -28,14 +29,18 @@ impl Database {
             "CREATE TABLE IF NOT EXISTS locations (
             loc         TEXT PRIMARY KEY,
             lat         TEXT NOT NULL,
-            lon         TEXT NOT NULL)",
+            lon         TEXT NOT NULL,
+            city        TEXT NOT NULL,
+            country     TEXT NOT NULL)",
             [],
         )?;
         db.execute(
             "CREATE TABLE IF NOT EXISTS weather (
             username    TEXT PRIMARY KEY,
             lat         TEXT NOT NULL,
-            lon         TEXT NOT NULL)",
+            lon         TEXT NOT NULL,
+            city        TEXT NOT NULL,
+            country     TEXT NOT NULL)",
             [],
         )?;
         Ok(Self { db })
@@ -120,11 +125,11 @@ impl Database {
         Ok(results)
     }
 
-    pub fn add_location(&self, entry: &Location) -> Result<(), Error> {
+    pub fn add_location(&self, loc: &str, entry: &Location) -> Result<(), Error> {
         self.db.execute(
-            "INSERT INTO locations      (loc, lat, lon)
-            VALUES                      (:loc, :lat, :lon)",
-            params!(entry.loc, entry.lat, entry.lon),
+            "INSERT INTO locations      (loc, lat, lon, city, country)
+            VALUES                      (:loc, :lat, :lon, :city, :country)",
+            params!(loc, entry.lat, entry.lon, entry.address.city, entry.address.country),
         )?;
 
         Ok(())
@@ -132,16 +137,19 @@ impl Database {
 
     pub fn check_location(&self, loc: &str) -> Result<Option<Location>, Error> {
         let mut statement = self.db.prepare(
-            "SELECT loc, lat, lon
+            "SELECT lat, lon, city, country
             FROM locations
             WHERE loc = :loc
             COLLATE NOCASE",
         )?;
         let rows = statement.query_map(params![loc], |r| {
             Ok(Location {
-                loc: r.get(0)?,
-                lat: r.get(1)?,
-                lon: r.get(2)?,
+                lat: r.get(0)?,
+                lon: r.get(1)?,
+                address: Address {
+                    city: r.get(2)?,
+                    country: r.get(3)?,
+                }
             })
         })?;
 
@@ -170,9 +178,15 @@ pub struct Notification {
     pub message: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
+pub struct Address {
+    pub city: String,
+    pub country: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct Location {
-    pub loc: String,
     pub lat: String,
     pub lon: String,
+    pub address: Address,
 }
