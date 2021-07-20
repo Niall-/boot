@@ -1,4 +1,4 @@
-use crate::sqlite::{Database};
+use crate::sqlite::Database;
 use chrono::{DateTime, Utc};
 use chrono_humanize::{Accuracy, HumanTime, Tense};
 use std::time::Duration;

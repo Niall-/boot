@@ -3,9 +3,11 @@ use futures::prelude::*;
 use irc::client::prelude::*;
 mod bot;
 mod messages;
+mod settings;
 mod sqlite;
 use crate::bot::{check_notification, check_seen};
 use crate::messages::Msg;
+use crate::settings::Settings;
 use crate::sqlite::Database;
 use crate::sqlite::{Notification, Seen};
 use irc::client::ClientStream;
@@ -34,9 +36,14 @@ async fn run_bot(
 
 #[tokio::main]
 async fn main() -> Result<(), failure::Error> {
-    let path = "./database.sqlite";
-    let db = Database::open(&path)?;
-    let mut client = Client::new("config.toml").await?;
+    let settings = Settings::load("config.toml")?;
+    let db = if let Some(ref path) = settings.bot.db {
+        Database::open(path)?
+    } else {
+        let path = "./database.sqlite";
+        Database::open(path)?
+    };
+    let mut client = Client::from_config(settings.irc).await?;
     let stream = client.stream()?;
     client.identify()?;
 

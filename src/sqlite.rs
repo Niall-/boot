@@ -1,12 +1,13 @@
 use failure::Error;
 use rusqlite::{params, Connection};
+use std::path::Path;
 
 pub struct Database {
     db: Connection,
 }
 
 impl Database {
-    pub fn open(path: &str) -> Result<Self, Error> {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, Error> {
         let db = Connection::open(path)?;
         db.execute(
             "CREATE TABLE IF NOT EXISTS seen (
