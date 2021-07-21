@@ -79,7 +79,7 @@ async fn main() -> Result<(), failure::Error> {
                 };
 
                 let response = format!(
-                    "live Coordinates for {:?}, {}: latitude: {}, longitude: {}",
+                    "Coordinates for {:?}, {}: latitude: {}, longitude: {}",
                     e.address.city, e.address.country, e.lat, e.lon
                 );
                 tx2.send(BotCommand::Privmsg((target, response)))
@@ -132,7 +132,7 @@ async fn main() -> Result<(), failure::Error> {
                     }
 
                     Some(c) if c == "help" => {
-                        let response = "Commands: repo | seen <nick> | tell <nick> <message>";
+                        let response = "Commands: repo | seen <nick> | tell <nick> <message> | weather <location>";
                         client.send_privmsg(msg.target, response).unwrap();
                     }
 
@@ -157,6 +157,7 @@ async fn main() -> Result<(), failure::Error> {
                                 Ok(None) => {
                                     let response = format!("Please enter a location");
                                     client.send_privmsg(&msg.target, response).unwrap();
+                                    continue
                                 }
                                 Err(err) => println!("Error checking weather: {}", err),
                             },
