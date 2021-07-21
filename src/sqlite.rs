@@ -30,7 +30,7 @@ impl Database {
             loc         TEXT PRIMARY KEY,
             lat         TEXT NOT NULL,
             lon         TEXT NOT NULL,
-            city        TEXT NOT NULL,
+            city        TEXT,
             country     TEXT NOT NULL)",
             [],
         )?;
@@ -38,9 +38,7 @@ impl Database {
             "CREATE TABLE IF NOT EXISTS weather (
             username    TEXT PRIMARY KEY,
             lat         TEXT NOT NULL,
-            lon         TEXT NOT NULL,
-            city        TEXT NOT NULL,
-            country     TEXT NOT NULL)",
+            lon         TEXT NOT NULL)",
             [],
         )?;
         Ok(Self { db })
@@ -161,6 +159,36 @@ impl Database {
         Ok(results.pop())
     }
 
+    pub fn add_weather(&self, user: &str, lat: &str, lon: &str) -> Result<(), Error> {
+        self.db.execute(
+            "INSERT INTO weather        (username, lat, lon)
+            VALUES                      (:user, :lat, :lon)
+            ON CONFLICT (username) DO
+            UPDATE SET lat=:lat,lon=:lon",
+            params!(user, lat, lon),
+        )?;
+
+        Ok(())
+    }
+
+    pub fn check_weather(&self, user: &str) -> Result<Option<(String, String)>, Error> {
+        let mut statement = self.db.prepare(
+            "SELECT lat, lon
+            FROM weather
+            WHERE username = :user
+            COLLATE NOCASE",
+        )?;
+        let rows = statement.query_map(params![user], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(r?);
+        }
+
+        Ok(results.pop())
+    }
 }
 
 #[derive(Debug)]
@@ -180,7 +208,7 @@ pub struct Notification {
 
 #[derive(Debug, Deserialize)]
 pub struct Address {
-    pub city: String,
+    pub city: Option<String>,
     pub country: String,
 }
 

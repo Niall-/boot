@@ -5,7 +5,7 @@ use irc::client::prelude::*;
 use linkify::{LinkFinder, LinkKind};
 use tokio::sync::mpsc;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Msg {
     pub current_nick: String,
     pub source: String,

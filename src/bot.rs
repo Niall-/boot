@@ -1,7 +1,9 @@
 use crate::sqlite::{Database, Location};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use chrono_humanize::{Accuracy, HumanTime, Tense};
 use failure::Error;
+use openweathermap::blocking::weather;
+use openweathermap::CurrentWeather;
 use std::time::Duration;
 use urlencoding::encode;
 use webpage::{Webpage, WebpageOptions};
@@ -97,13 +99,7 @@ pub fn check_notification(nick: &str, db: &Database) -> Vec<String> {
     notification
 }
 
-pub fn check_location(loc: &str, db: &Database) -> Result<Option<Location>, Error> {
-    if let Ok(Some(l)) = db.check_location(loc) {
-        println!("in db");
-        return Ok(Some(l));
-    };
-
-    println!("not in db");
+pub async fn get_location(loc: &str) -> Result<Option<Location>, Error> {
     // TODO: add this to settings
     let opt = WebpageOptions {
         allow_insecure: true,
@@ -127,9 +123,65 @@ pub fn check_location(loc: &str, db: &Database) -> Result<Option<Location>, Erro
     let page = Webpage::from_url(&url, opt)?;
     let mut entry: Vec<Location> = serde_json::from_str(&page.html.text_content)?;
 
-    if let Err(err) = db.add_location(loc, &entry[0]) {
-        println!("SQL error adding location: {}", err);
-    };
-
     Ok(entry.pop())
+}
+
+pub async fn get_weather(coords: &str, api_key: &str) -> Result<CurrentWeather, String> {
+    let w: CurrentWeather = weather(&coords, "metric", "en", api_key)?;
+
+    Ok(w)
+}
+
+pub fn print_weather(weather: CurrentWeather) -> String {
+    // this is dumb, it's only necessary because OpenWeatherMap doesn't fully capitalise weather
+    // conditions, see: https://openweathermap.org/weather-conditions
+    // https://stackoverflow.com/questions/38406793/why-is-capitalizing-the-first-letter-of-a-string-so-convoluted-in-rust/38406885#38406885
+    fn uppercase_first_letter(s: &str) -> String {
+        let mut c = s.chars();
+        match c.next() {
+            None => String::new(),
+            Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+        }
+    }
+
+    let location = &format!("{}, {}", weather.name, weather.sys.country);
+    // if the weather condition is cloudy add cloud coverage
+    let description = match weather.weather[0].id {
+        801..=804 => format!(
+            "{}, {}% cv",
+            &uppercase_first_letter(&weather.weather[0].description),
+            weather.clouds.all
+        ),
+        _ => uppercase_first_letter(&weather.weather[0].description),
+    };
+    // OpenWeatherMap provides sunrise/sunset in UTC (Unix time)
+    // it also provides an offset in seconds, in practice we can
+    // add/subtract it from UTC Unix time and get a naive
+    // local time but this isn't ideal
+    let mut sunrise = weather.sys.sunrise;
+    let mut sunset = weather.sys.sunset;
+    match weather.timezone.signum() {
+        1 => {
+            sunrise = sunrise.wrapping_add(weather.timezone);
+            sunset = sunset.wrapping_add(weather.timezone);
+        }
+        -1 => {
+            sunrise = sunrise.wrapping_sub(weather.timezone);
+            sunset = sunset.wrapping_sub(weather.timezone);
+        }
+        _ => (),
+    }
+    //let mut sunrise = NaiveDateTime::parse_from_str(&sunrise.to_string(), "%s");
+    //let mut sunset = NaiveDateTime::parse_from_str(&sunset.to_string(), "%s");
+    let sunrise = match NaiveDateTime::parse_from_str(&sunrise.to_string(), "%s") {
+        Ok(s) => s.format("%l:%M%p").to_string(),
+        Err(_) => "Failed to parse time".to_string(),
+    };
+    let sunset = match NaiveDateTime::parse_from_str(&sunset.to_string(), "%s") {
+        Ok(s) => s.format("%l:%M%p").to_string(),
+        Err(_) => "Failed to parse time".to_string(),
+    };
+    format!(
+                "Weather for {}: {} | Temp: {}°C | Wind: {} m/s at {}° | Humidity: {}% | Sunrise: {} | Sunset: {}",
+                location, description, weather.main.temp, weather.wind.speed, weather.wind.deg, weather.main.humidity, sunrise, sunset)
 }
