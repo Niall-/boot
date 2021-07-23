@@ -145,6 +145,7 @@ pub fn print_weather(weather: CurrentWeather) -> String {
     }
 
     let location = &format!("{}, {}", weather.name, weather.sys.country);
+
     // if the weather condition is cloudy add cloud coverage
     let description = match weather.weather[0].id {
         801..=804 => format!(
@@ -154,6 +155,8 @@ pub fn print_weather(weather: CurrentWeather) -> String {
         ),
         _ => uppercase_first_letter(&weather.weather[0].description),
     };
+
+    // FIXME: sunrise/sunset times are wrong for north america (but not australia/europe/japan/etc?)
     // OpenWeatherMap provides sunrise/sunset in UTC (Unix time)
     // it also provides an offset in seconds, in practice we can
     // add/subtract it from UTC Unix time and get a naive
@@ -181,7 +184,15 @@ pub fn print_weather(weather: CurrentWeather) -> String {
         Ok(s) => s.format("%l:%M%p").to_string(),
         Err(_) => "Failed to parse time".to_string(),
     };
-    format!(
-                "Weather for {}: {} | Temp: {}°C | Wind: {} m/s at {}° | Humidity: {}% | Sunrise: {} | Sunset: {}",
-                location, description, weather.main.temp, weather.wind.speed, weather.wind.deg, weather.main.humidity, sunrise, sunset)
+
+    let celsius = weather.main.temp.round();
+    let fahrenheit = ((weather.main.temp * (9.0 / 5.0)) + 32_f64).round();
+
+    let metric_wind = weather.wind.speed.round();
+    let imperial_wind = (weather.wind.speed * 2.2369_f64).round();
+    let direction = ["N", "NE", "E", "SE", "S", "SW", "W", "NW", "N"];
+    let degrees = weather.wind.deg.rem_euclid(360.0).round() as usize / 45;
+
+    format!("Weather for {}: {} | Temp: {}°C - {}°F | Wind: {} mph - {} m/s coming from {} - {}° | Humidity: {}% | Sunrise: {} | Sunset: {}",
+            location, description, celsius, fahrenheit, imperial_wind, metric_wind, direction[degrees], weather.wind.deg, weather.main.humidity, sunrise, sunset)
 }

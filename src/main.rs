@@ -92,7 +92,7 @@ async fn main() -> Result<(), failure::Error> {
                 };
             }
             BotCommand::UpdateLocation(loc, e) => {
-                println!("Updating location for loc");
+                println!("Updating location for loc: {}", loc);
                 if let Err(err) = db.add_location(&loc, &e) {
                     println!("SQL error updating location: {}", err);
                 };
