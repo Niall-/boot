@@ -1,6 +1,6 @@
-use crate::sqlite::{Seen};
+use crate::sqlite::Seen;
 use crate::BotCommand;
-use chrono::{Utc};
+use chrono::Utc;
 use irc::client::prelude::*;
 use linkify::{LinkFinder, LinkKind};
 use tokio::sync::mpsc;
@@ -83,6 +83,12 @@ async fn privmsg(msg: Msg, tx: mpsc::Sender<BotCommand>) {
         .map(|x| (msg.target.to_string(), x.as_str().to_string()))
         .collect();
     tx.send(BotCommand::Links(urls)).await.unwrap();
+
+    if msg.content.contains("🥾") || msg.content.contains("👢") {
+        let response = "https://www.youtube.com/watch?v=tfMcxmOBmpk".to_string();
+        let target = msg.target.to_string();
+        tx.send(BotCommand::Privmsg((target, response))).await.unwrap();
+    }
 
     let entry = Seen {
         username: msg.source.to_string(),

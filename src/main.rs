@@ -140,7 +140,7 @@ async fn main() -> Result<(), failure::Error> {
                     // separated out into its own functions
                     Some(c) if c == "weather" => {
                         if api_key == None {
-                            continue
+                            continue;
                         }
                         let key: String = api_key.as_ref().unwrap().to_string();
                         let tx2 = tx2.clone();
@@ -154,7 +154,7 @@ async fn main() -> Result<(), failure::Error> {
                                 Ok(None) => {
                                     let response = format!("Please enter a location");
                                     client.send_privmsg(&msg.target, response).unwrap();
-                                    continue
+                                    continue;
                                 }
                                 Err(err) => println!("Error checking weather: {}", err),
                             },
