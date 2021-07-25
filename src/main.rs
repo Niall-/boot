@@ -115,7 +115,7 @@ async fn main() -> Result<(), failure::Error> {
                 let line = match &msg.content {
                     c if c.starts_with(".") => c.strip_prefix("."),
                     c if c.starts_with("!") => c.strip_prefix("!"),
-                    c if c.starts_with(&nick) => {
+                    c if c.to_lowercase().starts_with(&nick) => {
                         let whitespace = c.find(char::is_whitespace);
                         match whitespace {
                             Some(w) => c.strip_prefix(&c[..w + 1]),
