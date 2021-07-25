@@ -190,7 +190,7 @@ pub fn print_weather(weather: CurrentWeather) -> String {
 
     let metric_wind = weather.wind.speed.round();
     let imperial_wind = (weather.wind.speed * 2.2369_f64).round();
-    let direction = ["N", "NE", "E", "SE", "S", "SW", "W", "NW", "N"];
+    let direction = ["↓ N", "↙ NE", "← E", "↖ SE", "↑ S", "↗ SW", "→ W", "↘ NW", "↓ N"];
     let degrees = weather.wind.deg.rem_euclid(360.0).round() as usize / 45;
 
     format!("Weather for {}: {} | Temp: {}°C - {}°F | Wind: {} mph - {} m/s coming from {} - {}° | Humidity: {}% | Sunrise: {} | Sunset: {}",

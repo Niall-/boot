@@ -92,7 +92,6 @@ async fn main() -> Result<(), failure::Error> {
                 };
             }
             BotCommand::UpdateLocation(loc, e) => {
-                println!("Updating location for loc: {}", loc);
                 if let Err(err) = db.add_location(&loc, &e) {
                     println!("SQL error updating location: {}", err);
                 };
@@ -140,16 +139,14 @@ async fn main() -> Result<(), failure::Error> {
                     // duplicated as much here, and especially so that it can be
                     // separated out into its own functions
                     Some(c) if c == "weather" => {
-                        let mut key = String::new();
-                        match api_key {
-                            Some(ref k) => key = k.to_string(),
-                            None => continue,
+                        if api_key == None {
+                            continue
                         }
+                        let key: String = api_key.as_ref().unwrap().to_string();
                         let tx2 = tx2.clone();
                         let location = tokens.as_str();
                         let source = msg.source.clone();
                         let mut coords: Option<String> = None;
-                        //println!("location: {}, {}", location, location.is_empty());
 
                         match location.is_empty() {
                             true => match db.check_weather(&msg.source) {
