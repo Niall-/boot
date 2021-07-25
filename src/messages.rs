@@ -3,6 +3,7 @@ use crate::BotCommand;
 use chrono::Utc;
 use irc::client::prelude::*;
 use linkify::{LinkFinder, LinkKind};
+use rand::random;
 use tokio::sync::mpsc;
 
 #[derive(Debug, Clone)]
@@ -85,9 +86,14 @@ async fn privmsg(msg: Msg, tx: mpsc::Sender<BotCommand>) {
     tx.send(BotCommand::Links(urls)).await.unwrap();
 
     if msg.content.contains("🥾") || msg.content.contains("👢") {
-        let response = "https://www.youtube.com/watch?v=tfMcxmOBmpk".to_string();
-        let target = msg.target.to_string();
-        tx.send(BotCommand::Privmsg((target, response))).await.unwrap();
+        let y: f64 = random::<f64>();
+        if y > 0.975 {
+            let response = "https://www.youtube.com/watch?v=tfMcxmOBmpk".to_string();
+            let target = msg.target.to_string();
+            tx.send(BotCommand::Privmsg((target, response)))
+                .await
+                .unwrap();
+        }
     }
 
     let entry = Seen {
