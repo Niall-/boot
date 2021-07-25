@@ -54,7 +54,8 @@ async fn main() -> Result<(), failure::Error> {
     let (tx, mut rx) = mpsc::channel::<BotCommand>(32);
     let tx2 = tx.clone();
 
-    tokio::spawn(async move { run_bot(stream, &"boot", tx.clone()).await });
+    let nick = client.current_nickname().to_string();
+    tokio::spawn(async move { run_bot(stream, &nick, tx.clone()).await });
 
     while let Some(cmd) = rx.recv().await {
         match cmd {
@@ -110,17 +111,13 @@ async fn main() -> Result<(), failure::Error> {
                 }
 
                 // past this point we only care about interactions with the bot
+                let nick = client.current_nickname().to_lowercase();
                 let mut tokens = msg.content.split_whitespace();
                 let next = tokens.next();
                 match next {
-                    Some(n)
-                        if !n
-                            .to_lowercase()
-                            .starts_with(&msg.current_nick.to_lowercase()) =>
-                    {
-                        continue
-                    }
-                    _ => (),
+                    Some(".") => (),
+                    Some(n) if n.to_lowercase().starts_with(&nick) => (),
+                    _ => continue,
                 }
 
                 // i.e., 'boot: command'
