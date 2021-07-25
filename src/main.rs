@@ -112,13 +112,24 @@ async fn main() -> Result<(), failure::Error> {
 
                 // past this point we only care about interactions with the bot
                 let nick = client.current_nickname().to_lowercase();
-                let mut tokens = msg.content.split_whitespace();
-                let next = tokens.next();
-                match next {
-                    Some(".") => (),
-                    Some(n) if n.to_lowercase().starts_with(&nick) => (),
-                    _ => continue,
+                let line = match &msg.content {
+                    c if c.starts_with(".") => c.strip_prefix("."),
+                    c if c.starts_with("!") => c.strip_prefix("!"),
+                    c if c.starts_with(&nick) => {
+                        let whitespace = c.find(char::is_whitespace);
+                        match whitespace {
+                            Some(w) => c.strip_prefix(&c[..w + 1]),
+                            None => None,
+                        }
+                    }
+                    _ => None,
+                };
+
+                if !line.is_some() {
+                    continue;
                 }
+
+                let mut tokens = line.unwrap().split_whitespace();
 
                 // i.e., 'boot: command'
                 match tokens.next().map(|t| t.to_lowercase()) {
