@@ -80,8 +80,8 @@ async fn main() -> Result<(), failure::Error> {
                 };
 
                 let response = format!(
-                    "Coordinates for {:?}, {}: latitude: {}, longitude: {}",
-                    e.address.city, e.address.country, e.lat, e.lon
+                    "https://www.openstreetmap.org/?mlat={}&mlon={}",
+                    e.lat, e.lon
                 );
                 tx2.send(BotCommand::Privmsg((target, response)))
                     .await
@@ -273,8 +273,8 @@ async fn main() -> Result<(), failure::Error> {
                         match loc {
                             Ok(Some(l)) => {
                                 let response = format!(
-                                    "Coordinates for {:?}, {}: latitude: {}, longitude: {}",
-                                    l.address.city, l.address.country, l.lat, l.lon
+                                    "https://www.openstreetmap.org/?mlat={}&mlon={}",
+                                    l.lat, l.lon
                                 );
                                 client.send_privmsg(msg.target, response).unwrap();
                             }
