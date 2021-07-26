@@ -156,26 +156,11 @@ pub fn print_weather(weather: CurrentWeather) -> String {
         _ => uppercase_first_letter(&weather.weather[0].description),
     };
 
-    // FIXME: sunrise/sunset times are wrong for north america (but not australia/europe/japan/etc?)
     // OpenWeatherMap provides sunrise/sunset in UTC (Unix time)
     // it also provides an offset in seconds, in practice we can
-    // add/subtract it from UTC Unix time and get a naive
-    // local time but this isn't ideal
-    let mut sunrise = weather.sys.sunrise;
-    let mut sunset = weather.sys.sunset;
-    match weather.timezone.signum() {
-        1 => {
-            sunrise = sunrise.wrapping_add(weather.timezone);
-            sunset = sunset.wrapping_add(weather.timezone);
-        }
-        -1 => {
-            sunrise = sunrise.wrapping_sub(weather.timezone);
-            sunset = sunset.wrapping_sub(weather.timezone);
-        }
-        _ => (),
-    }
-    //let mut sunrise = NaiveDateTime::parse_from_str(&sunrise.to_string(), "%s");
-    //let mut sunset = NaiveDateTime::parse_from_str(&sunset.to_string(), "%s");
+    // add it to UTC Unix time and get a naive local time but this isn't ideal
+    let sunrise = weather.sys.sunrise.wrapping_add(weather.timezone);
+    let sunset = weather.sys.sunset.wrapping_add(weather.timezone);
     let sunrise = match NaiveDateTime::parse_from_str(&sunrise.to_string(), "%s") {
         Ok(s) => s.format("%l:%M%p").to_string(),
         Err(_) => "Failed to parse time".to_string(),
@@ -190,7 +175,9 @@ pub fn print_weather(weather: CurrentWeather) -> String {
 
     let metric_wind = weather.wind.speed.round();
     let imperial_wind = (weather.wind.speed * 2.2369_f64).round();
-    let direction = ["↓ N", "↙ NE", "← E", "↖ SE", "↑ S", "↗ SW", "→ W", "↘ NW", "↓ N"];
+    let direction = [
+        "↓ N", "↙ NE", "← E", "↖ SE", "↑ S", "↗ SW", "→ W", "↘ NW", "↓ N",
+    ];
     let degrees = weather.wind.deg.rem_euclid(360.0).round() as usize / 45;
 
     format!("Weather for {}: {} | Temp: {}°C - {}°F | Wind: {} mph - {} m/s coming from {} - {}° | Humidity: {}% | Sunrise: {} | Sunset: {}",
