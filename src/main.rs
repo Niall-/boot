@@ -16,6 +16,7 @@ use tokio::sync::mpsc;
 
 #[derive(Debug)]
 pub enum BotCommand {
+    Quit(String, String),
     Privmsg((String, String)),
     Links(Vec<(String, String)>),
     Seen(Seen),
@@ -59,6 +60,14 @@ async fn main() -> Result<(), failure::Error> {
 
     while let Some(cmd) = rx.recv().await {
         match cmd {
+            BotCommand::Quit(t, m) => {
+                // this won't handle sanick, but it should be good enough
+                let nick = client.current_nickname().to_string();
+                if t == nick {
+                    println!("Quit! {}, {}", t, m);
+                    break;
+                }
+            }
             BotCommand::Privmsg(m) => client.send_privmsg(m.0, m.1).unwrap(),
             BotCommand::Links(u) => {
                 let tx2 = tx2.clone();

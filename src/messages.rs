@@ -67,6 +67,15 @@ pub async fn process_message(current_nick: &str, message: &Message, tx: mpsc::Se
             ))
             .await
         }
+        Command::QUIT(message) => quit(Msg::new(
+                nick,
+                source.unwrap().to_string(),
+                target.unwrap().to_string(),
+                "".to_string()),
+                message, tx.clone()).await,
+        // should handle this at some point but for now I don't care
+        //Command::SAQUIT(nick, message) => saquit(nick, message, tx.clone()).await,
+        //Command::KILL(nick, message) => kill(nick, message, tx.clone()).await,
         _ => (),
     };
 }
@@ -116,3 +125,11 @@ async fn kick(msg: Msg, tx: mpsc::Sender<BotCommand>) {
 }
 
 async fn invite(_msg: Msg) {}
+
+async fn quit(msg: Msg, quit_message: &Option<String>, tx: mpsc::Sender<BotCommand>) {
+    let quit_message = match quit_message {
+        Some(m) => m.to_string(),
+        None => "".to_string(),
+    };
+    tx.send(BotCommand::Quit(msg.source, quit_message)).await.unwrap();
+}
