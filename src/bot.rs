@@ -175,11 +175,28 @@ pub fn print_weather(weather: CurrentWeather) -> String {
 
     let metric_wind = weather.wind.speed.round();
     let imperial_wind = (weather.wind.speed * 2.2369_f64).round();
+    let wind = match weather.wind.gust {
+        Some(g) => {
+            let metric_gust = g.round();
+            let imperial_gust = (g * 2.2369_f64).round();
+            format!(
+                "Wind: {} mph [{} m/s], Gust: {} mph [{} m/s]",
+                metric_wind, imperial_wind, imperial_gust, metric_gust
+            )
+        }
+        None => {
+            format!("Wind: {} mph [{} m/s]", metric_wind, imperial_wind)
+        }
+    };
+
     let direction = [
         "↓ N", "↙ NE", "← E", "↖ SE", "↑ S", "↗ SW", "→ W", "↘ NW", "↓ N",
     ];
     let degrees = weather.wind.deg.rem_euclid(360.0).round() as usize / 45;
 
-    format!("Weather for {}: {} | Temp: {}°C - {}°F | Wind: {} mph - {} m/s coming from {} - {}° | Humidity: {}% | Sunrise: {} | Sunset: {}",
-            location, description, celsius, fahrenheit, imperial_wind, metric_wind, direction[degrees], weather.wind.deg, weather.main.humidity, sunrise, sunset)
+    format!("Weather for {}: {}, {}% Humidity | Temp: {}°C [{}°F] | {} coming from {} - {}° | Sunrise: {} | Sunset: {}",
+            location, description, weather.main.humidity,
+            celsius, fahrenheit,
+            wind, direction[degrees], weather.wind.deg,
+            sunrise, sunset)
 }
