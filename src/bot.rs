@@ -136,7 +136,7 @@ pub fn print_weather(weather: CurrentWeather) -> String {
     // this is dumb, it's only necessary because OpenWeatherMap doesn't fully capitalise weather
     // conditions, see: https://openweathermap.org/weather-conditions
     // https://stackoverflow.com/questions/38406793/why-is-capitalizing-the-first-letter-of-a-string-so-convoluted-in-rust/38406885#38406885
-    fn uppercase_first_letter(s: &str) -> String {
+    fn uppercase(s: &str) -> String {
         let mut c = s.chars();
         match c.next() {
             None => String::new(),
@@ -147,13 +147,22 @@ pub fn print_weather(weather: CurrentWeather) -> String {
     let location = &format!("{}, {}", weather.name, weather.sys.country);
 
     // if the weather condition is cloudy add cloud coverage
+    // https://openweathermap.org/weather-conditions
+    // the 700..=781 range has some conditions like
+    // mist/haze/fog but I don't think cloud coverage matters there
+    let description = format!("{}", &uppercase(&weather.weather[0].description));
     let description = match weather.weather[0].id {
-        801..=804 => format!(
-            "{}, {}% cv",
-            &uppercase_first_letter(&weather.weather[0].description),
-            weather.clouds.all
-        ),
-        _ => uppercase_first_letter(&weather.weather[0].description),
+        // thunderstorms
+        200..=232 => format!("{}, {}% cv", description, weather.clouds.all),
+        // drizzle
+        300..=321 => format!("{}, {}% cv", description, weather.clouds.all),
+        // rain
+        500..=531 => format!("{}, {}% cv", description, weather.clouds.all),
+        // snow
+        600..=622 => format!("{}, {}% cv", description, weather.clouds.all),
+        // clouds
+        801..=804 => format!("{}, {}% cv", description, weather.clouds.all),
+        _ => uppercase(&weather.weather[0].description),
     };
 
     // OpenWeatherMap provides sunrise/sunset in UTC (Unix time)
