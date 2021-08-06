@@ -122,6 +122,7 @@ async fn main() -> Result<(), failure::Error> {
                 // past this point we only care about interactions with the bot
                 let nick = client.current_nickname().to_lowercase();
                 let line = match &msg.content {
+                    c if c.starts_with("./") => c.strip_prefix("./"),
                     c if c.starts_with(".") => c.strip_prefix("."),
                     c if c.starts_with("!") => c.strip_prefix("!"),
                     c if c.to_lowercase().starts_with(&nick) => {
