@@ -119,12 +119,17 @@ async fn main() -> Result<(), failure::Error> {
                     client.send_privmsg(&msg.target, &n).unwrap();
                 }
 
+                let nick = client.current_nickname().to_lowercase();
+
                 if msg.content.starts_with("nn") {
-                    client.send_privmsg(&msg.target, "nn").unwrap();
+                    let response = match &msg.content {
+                        c if c.to_lowercase().contains(&nick) => format!("nn {}", &msg.source),
+                        _ => format!("nn"),
+                    };
+                    client.send_privmsg(&msg.target, response).unwrap();
                 }
 
                 // past this point we only care about interactions with the bot
-                let nick = client.current_nickname().to_lowercase();
                 let line = match &msg.content {
                     c if c.starts_with("./") => c.strip_prefix("./"),
                     c if c.starts_with(".") => c.strip_prefix("."),
