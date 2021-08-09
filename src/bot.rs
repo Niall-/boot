@@ -1,10 +1,12 @@
 use crate::sqlite::{Database, Location};
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use chrono_humanize::{Accuracy, HumanTime, Tense};
 use failure::Error;
 use openweathermap::blocking::weather;
 use openweathermap::CurrentWeather;
-use std::time::Duration;
+use serde::Deserialize;
+use std::f32::MAX as f32_max;
+use std::time::Duration as STDDuration;
 use urlencoding::encode;
 use webpage::{Webpage, WebpageOptions};
 
@@ -38,7 +40,7 @@ async fn fetch_title(target: String, url: String) -> (String, Option<String>) {
         allow_insecure: true,
         follow_location: true,
         max_redirections: 10,
-        timeout: Duration::from_secs(10),
+        timeout: STDDuration::from_secs(10),
         // a legitimate user agent is necessary for some sites (twitter)
         useragent: format!("Mozilla/5.0 boot-bot-rs/1.3.0"),
     };
@@ -105,7 +107,7 @@ pub async fn get_location(loc: &str) -> Result<Option<Location>, Error> {
         allow_insecure: true,
         follow_location: true,
         max_redirections: 10,
-        timeout: Duration::from_secs(10),
+        timeout: STDDuration::from_secs(10),
         // a legitimate user agent is necessary for some sites (twitter)
         useragent: format!("Mozilla/5.0 boot-bot-rs/1.3.0"),
     };
@@ -208,4 +210,126 @@ pub fn print_weather(weather: CurrentWeather) -> String {
             celsius, fahrenheit,
             wind, direction[degrees], weather.wind.deg,
             sunrise, sunset)
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Coin {
+    #[serde(skip)]
+    pub coin: String,
+    #[serde(alias = "priceUsd")]
+    pub price_usd: String,
+    pub date: String,
+    #[serde(skip)]
+    pub data: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct Coins {
+    data: Vec<Coin>,
+}
+
+pub async fn get_coins(coin: &str) -> Result<Coin, Error> {
+    // TODO: add this to settings
+    let opt = WebpageOptions {
+        allow_insecure: true,
+        follow_location: true,
+        max_redirections: 10,
+        timeout: STDDuration::from_secs(10),
+        // a legitimate user agent is necessary for some sites (twitter)
+        useragent: format!("Mozilla/5.0 boot-bot-rs/1.3.0"),
+    };
+
+    let now = Utc::now();
+    let past_day = now.checked_sub_signed(Duration::days(1)).unwrap();
+
+    // we should be getting the correct coin name for this
+    let url = format!(
+        "https://api.coincap.io/v2/assets/{}/history?interval=h1&start={}&end={}",
+        coin,
+        past_day.timestamp_millis(),
+        now.timestamp_millis()
+    );
+
+    let page = Webpage::from_url(&url, opt)?;
+
+    // TODO
+    //if page.http.response_code == 429 {
+    //}
+
+    let mut coins: Coins = serde_json::from_str(&page.html.text_content).unwrap();
+    let prices: Vec<f32> = coins
+        .data
+        .iter()
+        .map(|e| e.price_usd.parse::<f32>().unwrap())
+        .collect();
+    let graph = graph(prices);
+
+    let recent = coins.data.pop().unwrap();
+    let recent_date = recent.date;
+    let recent_price = recent.price_usd.parse::<f32>().unwrap();
+
+    let result = Coin {
+        coin: coin.to_string(),
+        price_usd: recent_price.to_string(),
+        date: recent_date,
+        data: graph,
+    };
+
+    Ok(result)
+}
+
+pub fn print_coins(coin: Coin) -> String {
+    format!(
+        "{} over the past day: {} ${}",
+        coin.coin, coin.data, coin.price_usd
+    )
+}
+
+// the following is adapted from
+// https://github.com/jiri/rust-spark
+fn graph(prices: Vec<f32>) -> String {
+    let ticks = "▁▂▃▄▅▆▇█";
+
+    /* XXX: This doesn't feel like idiomatic Rust */
+    let mut min: f32 = f32_max;
+    let mut max: f32 = 0.0;
+
+    for &i in prices.iter() {
+        if i > max {
+            max = i;
+        }
+        if i < min {
+            min = i;
+        }
+    }
+
+    let ratio = if max == min {
+        1.0
+    } else {
+        (ticks.chars().count() - 1) as f32 / (max - min)
+    };
+
+    let mut v = String::new();
+    let mut count = 0;
+    for p in prices.iter() {
+        let ratio = ((p - min) * ratio).round() as usize;
+
+        // the first bar is always going to be green
+        // this is technically incorrect but fixing it will
+        // require getting 25h of data and discarding the first hour
+        if count == 0 {
+            v.push_str(&format!("\x0303{}", ticks.chars().nth(ratio).unwrap()));
+        } else {
+            // if the current price is higher than the previous price
+            // the bar should be green, else red
+            if p > &prices[count - 1] {
+                v.push_str(&format!("\x0303{}\x03", ticks.chars().nth(ratio).unwrap()));
+            } else {
+                v.push_str(&format!("\x0304{}\x03", ticks.chars().nth(ratio).unwrap()));
+            }
+        }
+        count = count + 1;
+    }
+
+    v
 }

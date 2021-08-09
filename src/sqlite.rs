@@ -1,7 +1,8 @@
+use crate::bot::Coin;
 use failure::Error;
 use rusqlite::{params, Connection};
+use serde::Deserialize;
 use std::path::Path;
-use serde::{Deserialize};
 
 pub struct Database {
     db: Connection,
@@ -39,6 +40,14 @@ impl Database {
             username    TEXT PRIMARY KEY,
             lat         TEXT NOT NULL,
             lon         TEXT NOT NULL)",
+            [],
+        )?;
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS coins (
+            coin        TEXT PRIMARY KEY,
+            price       TEXT NOT NULL,
+            date        TEXT NOT NULL,
+            data        TEXT NOT NULL)",
             [],
         )?;
         Ok(Self { db })
@@ -127,7 +136,13 @@ impl Database {
         self.db.execute(
             "INSERT INTO locations      (loc, lat, lon, city, country)
             VALUES                      (:loc, :lat, :lon, :city, :country)",
-            params!(loc, entry.lat, entry.lon, entry.address.city, entry.address.country),
+            params!(
+                loc,
+                entry.lat,
+                entry.lon,
+                entry.address.city,
+                entry.address.country
+            ),
         )?;
 
         Ok(())
@@ -147,7 +162,7 @@ impl Database {
                 address: Address {
                     city: r.get(2)?,
                     country: r.get(3)?,
-                }
+                },
             })
         })?;
 
@@ -178,8 +193,41 @@ impl Database {
             WHERE username = :user
             COLLATE NOCASE",
         )?;
-        let rows = statement.query_map(params![user], |r| {
-            Ok((r.get(0)?, r.get(1)?))
+        let rows = statement.query_map(params![user], |r| Ok((r.get(0)?, r.get(1)?)))?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(r?);
+        }
+
+        Ok(results.pop())
+    }
+
+    pub fn add_coins(&self, coin: &Coin) -> Result<(), Error> {
+        self.db.execute(
+            "INSERT INTO coins      (coin, price, date, data)
+            VALUES                  (:coin, :price, :date, :data)
+            ON CONFLICT (coin) DO
+            UPDATE SET price=:price,date=:date,data=:data",
+            params!(coin.coin, coin.price_usd, coin.date, coin.data),
+        )?;
+
+        Ok(())
+    }
+
+    pub fn check_coins(&self, coin: &str) -> Result<Option<Coin>, Error> {
+        let mut statement = self.db.prepare(
+            "SELECT coin, price, date, data
+            FROM coins
+            WHERE coin = :coin",
+        )?;
+        let rows = statement.query_map(params![coin], |r| {
+            Ok(Coin {
+                coin: r.get(0)?,
+                price_usd: r.get(1)?,
+                date: r.get(2)?,
+                data: r.get(3)?,
+            })
         })?;
 
         let mut results = Vec::new();

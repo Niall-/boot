@@ -5,11 +5,13 @@ mod bot;
 mod messages;
 mod settings;
 mod sqlite;
-use crate::bot::{check_notification, check_seen};
+use crate::bot::{check_notification, check_seen, Coin};
 use crate::messages::Msg;
 use crate::settings::Settings;
-use crate::sqlite::Database;
-use crate::sqlite::{Location, Notification, Seen};
+use crate::sqlite::{Database, Location, Notification, Seen};
+use chrono::DateTime;
+use chrono::Duration;
+use chrono::Utc;
 use irc::client::ClientStream;
 use messages::process_message;
 use tokio::sync::mpsc;
@@ -23,6 +25,7 @@ pub enum BotCommand {
     Location(String, String, Location),
     UpdateWeather(String, String, String),
     UpdateLocation(String, Location),
+    UpdateCoins(Coin),
     Message(Msg),
 }
 
@@ -106,6 +109,11 @@ async fn main() -> Result<(), failure::Error> {
                     println!("SQL error updating location: {}", err);
                 };
             }
+            BotCommand::UpdateCoins(coin) => {
+                if let Err(err) = db.add_coins(&coin) {
+                    println!("SQL error updating coins: {}", err);
+                };
+            }
             BotCommand::Message(msg) => {
                 // HACK: check_notification only returns at most 2 notifications
                 // if user alice spams user bob with notifications, when bob speaks he will be spammed with all
@@ -150,6 +158,8 @@ async fn main() -> Result<(), failure::Error> {
 
                 let mut tokens = line.unwrap().split_whitespace();
 
+                let coins = ["btc", "bitcoin", "eth", "ethereum"];
+
                 // i.e., 'boot: command'
                 match tokens.next().map(|t| t.to_lowercase()) {
                     Some(c) if c == "repo" => {
@@ -160,6 +170,57 @@ async fn main() -> Result<(), failure::Error> {
                     Some(c) if c == "help" => {
                         let response = "Commands: repo | seen <nick> | tell <nick> <message> | weather <location>";
                         client.send_privmsg(msg.target, response).unwrap();
+                    }
+
+                    Some(c) if coins.iter().any(|e| e == &c) => {
+                        let coin = match c.as_ref() {
+                            "btc" | "bitcoin" => "bitcoin",
+                            "eth" | "ethereum" => "ethereum",
+                            _ => "bitcoin",
+                        };
+
+                        let dbcoin = db.check_coins(coin);
+
+                        let check = match dbcoin {
+                            Ok(Some(c)) => {
+                                let now = Utc::now();
+                                let previous = DateTime::parse_from_rfc3339(&c.date).unwrap();
+                                let duration = now.signed_duration_since(previous);
+                                if duration > Duration::hours(1) {
+                                    true
+                                } else {
+                                    let response = bot::print_coins(c);
+                                    client.send_privmsg(&msg.target, response).unwrap();
+                                    false
+                                }
+                            }
+                            Ok(None) => true,
+                            Err(err) => {
+                                println!("error checking coins: {}", err);
+                                true
+                            }
+                        };
+
+                        if check {
+                            let ftarget = msg.target.clone();
+                            let tx2 = tx2.clone();
+                            tokio::spawn(async move {
+                                let coins = bot::get_coins(&coin).await;
+                                match coins {
+                                    Ok(coins) => {
+                                        let coin = coins.clone();
+                                        tx2.send(BotCommand::UpdateCoins(coin)).await.unwrap();
+                                        let response = bot::print_coins(coins);
+                                        tx2.send(BotCommand::Privmsg((ftarget, response)))
+                                            .await
+                                            .unwrap();
+                                    }
+                                    Err(err) => {
+                                        println!("issue getting shitcoin data: {}", err);
+                                    }
+                                }
+                            });
+                        }
                     }
 
                     // TODO: figure out the borrowowing issue(s?) so code doesn't have to be
