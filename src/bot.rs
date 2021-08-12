@@ -1,5 +1,5 @@
 use crate::sqlite::{Database, Location};
-use chrono::{DateTime, Duration, NaiveDateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use chrono_humanize::{Accuracy, HumanTime, Tense};
 use failure::Error;
 use openweathermap::blocking::weather;
@@ -214,18 +214,20 @@ pub fn print_weather(weather: CurrentWeather) -> String {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Coin {
-    #[serde(skip)]
     pub coin: String,
-    #[serde(alias = "priceUsd")]
-    pub price_usd: String,
-    pub date: String,
-    #[serde(skip)]
-    pub data: String,
+    pub date: i64,
+    pub data_0: String,
+    pub data_1: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct Coins {
-    data: Vec<Coin>,
+    mts: i64,
+    open: f32,
+    close: f32,
+    high: f32,
+    low: f32,
+    volume: f32,
 }
 
 pub async fn get_coins(coin: &str) -> Result<Coin, Error> {
@@ -239,55 +241,97 @@ pub async fn get_coins(coin: &str) -> Result<Coin, Error> {
         useragent: format!("Mozilla/5.0 boot-bot-rs/1.3.0"),
     };
 
-    let now = Utc::now();
-    let past_day = now.checked_sub_signed(Duration::days(1)).unwrap();
-
     // we should be getting the correct coin name for this
     let url = format!(
-        "https://api.coincap.io/v2/assets/{}/history?interval=h1&start={}&end={}",
-        coin,
-        past_day.timestamp_millis(),
-        now.timestamp_millis()
+        "https://api-pub.bitfinex.com/v2/candles/trade:15m:{}/hist?limit=96",
+        coin
     );
 
     let page = Webpage::from_url(&url, opt)?;
 
-    // TODO
+
+    // TODO - status codes
     //if page.http.response_code == 429 {
     //}
 
-    let mut coins: Coins = serde_json::from_str(&page.html.text_content).unwrap();
-    let prices: Vec<f32> = coins
-        .data
-        .iter()
-        .map(|e| e.price_usd.parse::<f32>().unwrap())
-        .collect();
-    let graph = graph(prices);
+    let mut coins: Vec<Coins> = serde_json::from_str(&page.html.text_content)?;
+    coins.reverse();
+    let mut prices = Vec::<f32>::new();
 
-    let recent = coins.data.pop().unwrap();
-    let recent_date = recent.date;
-    let recent_price = recent.price_usd.parse::<f32>().unwrap();
+    let mut count = 0;
+    let mut initial: f32 = 0.0;
+    let mut min: (f32, usize) = (0.0, 0);
+    let mut max: (f32, usize) = (0.0, 0);
+    let mut mean: f32 = 0.0;
 
+    // what we want is the min, max, mean, values the prices
+    // we also want the prices every hour (count % 4 == 0)
+    // the initial value is to colour code the initial bar which
+    // will be coins[3] since we're only keeping hourly prices
+    for c in &coins {
+        if count == 0 {
+            initial = c.close;
+            min = (c.close, count);
+            max = (c.close, count);
+        } else {
+            if count % 4 == 0 {
+                prices.push(c.close);
+            }
+            if c.close > max.0 {
+                max = (c.close, count);
+            }
+            if c.close < min.0 {
+                min = (c.close, count);
+            }
+        }
+        mean += c.close;
+        count += 1;
+    }
+
+    let len = coins.len();
+    mean = mean / len as f32;
+
+    let graph = graph(initial, prices);
+    let graph = format!(
+        "{} begin: ${} {} {} end: ${} {}",
+        coin,
+        coins[0].close,
+        print_date(coins[0].mts),
+        graph,
+        coins[len - 1].close,
+        print_date(coins[len - 1].mts),
+    );
+
+    let stats = format!(
+        "{} high: ${} {} // mean: ${} // low: ${} {}",
+        coin,
+        max.0,
+        print_date(coins[max.1].mts),
+        mean,
+        min.0,
+        print_date(coins[min.1].mts),
+    );
+
+    let recent = coins.pop().unwrap();
     let result = Coin {
         coin: coin.to_string(),
-        price_usd: recent_price.to_string(),
-        date: recent_date,
-        data: graph,
+        date: recent.mts,
+        data_0: graph,
+        data_1: stats,
     };
 
     Ok(result)
 }
 
-pub fn print_coins(coin: Coin) -> String {
-    format!(
-        "{} over the past day: {} ${}",
-        coin.coin, coin.data, coin.price_usd
-    )
+fn print_date(date: i64) -> String {
+    let date = (date / 1000).to_string();
+    let time = NaiveDateTime::parse_from_str(&date, "%s").unwrap();
+    time.format("(%a %d %T)").to_string()
 }
 
 // the following is adapted from
 // https://github.com/jiri/rust-spark
-fn graph(prices: Vec<f32>) -> String {
+fn graph(initial: f32, prices: Vec<f32>) -> String {
     let ticks = "▁▂▃▄▅▆▇█";
 
     /* XXX: This doesn't feel like idiomatic Rust */
@@ -314,11 +358,12 @@ fn graph(prices: Vec<f32>) -> String {
     for p in prices.iter() {
         let ratio = ((p - min) * ratio).round() as usize;
 
-        // the first bar is always going to be green
-        // this is technically incorrect but fixing it will
-        // require getting 25h of data and discarding the first hour
         if count == 0 {
-            v.push_str(&format!("\x0303{}", ticks.chars().nth(ratio).unwrap()));
+            if p > &initial {
+                v.push_str(&format!("\x0303{}", ticks.chars().nth(ratio).unwrap()));
+            } else {
+                v.push_str(&format!("\x0304{}\x03", ticks.chars().nth(ratio).unwrap()));
+            }
         } else {
             // if the current price is higher than the previous price
             // the bar should be green, else red

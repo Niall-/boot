@@ -9,9 +9,7 @@ use crate::bot::{check_notification, check_seen, Coin};
 use crate::messages::Msg;
 use crate::settings::Settings;
 use crate::sqlite::{Database, Location, Notification, Seen};
-use chrono::DateTime;
-use chrono::Duration;
-use chrono::Utc;
+use chrono::{Duration, NaiveDateTime, Utc};
 use irc::client::ClientStream;
 use messages::process_message;
 use tokio::sync::mpsc;
@@ -174,23 +172,25 @@ async fn main() -> Result<(), failure::Error> {
 
                     Some(c) if coins.iter().any(|e| e == &c) => {
                         let coin = match c.as_ref() {
-                            "btc" | "bitcoin" => "bitcoin",
-                            "eth" | "ethereum" => "ethereum",
-                            _ => "bitcoin",
+                            "btc" | "bitcoin" => "tBTCUSD",
+                            "eth" | "ethereum" => "tETHUSD",
+                            _ => "tBTCUSD",
                         };
 
-                        let dbcoin = db.check_coins(coin);
+                        let dbcoin = db.check_coins(&coin);
 
                         let check = match dbcoin {
                             Ok(Some(c)) => {
-                                let now = Utc::now();
-                                let previous = DateTime::parse_from_rfc3339(&c.date).unwrap();
+                                let now = Utc::now().naive_utc();
+                                let date = (c.date / 1000).to_string();
+                                let previous = NaiveDateTime::parse_from_str(&date, "%s").unwrap();
                                 let duration = now.signed_duration_since(previous);
-                                if duration > Duration::hours(1) {
+
+                                if duration > Duration::seconds(15 * 60 + 30) {
                                     true
                                 } else {
-                                    let response = bot::print_coins(c);
-                                    client.send_privmsg(&msg.target, response).unwrap();
+                                    client.send_privmsg(&msg.target, c.data_0).unwrap();
+                                    client.send_privmsg(&msg.target, c.data_1).unwrap();
                                     false
                                 }
                             }
@@ -209,9 +209,14 @@ async fn main() -> Result<(), failure::Error> {
                                 match coins {
                                     Ok(coins) => {
                                         let coin = coins.clone();
+                                        let coin2 = coins.clone();
+                                        let coin3 = coins.clone();
+                                        let ftarget2 = ftarget.clone();
                                         tx2.send(BotCommand::UpdateCoins(coin)).await.unwrap();
-                                        let response = bot::print_coins(coins);
-                                        tx2.send(BotCommand::Privmsg((ftarget, response)))
+                                        tx2.send(BotCommand::Privmsg((ftarget, coin2.data_0)))
+                                            .await
+                                            .unwrap();
+                                        tx2.send(BotCommand::Privmsg((ftarget2, coin3.data_1)))
                                             .await
                                             .unwrap();
                                     }

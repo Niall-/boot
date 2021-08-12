@@ -45,9 +45,9 @@ impl Database {
         db.execute(
             "CREATE TABLE IF NOT EXISTS coins (
             coin        TEXT PRIMARY KEY,
-            price       TEXT NOT NULL,
-            date        TEXT NOT NULL,
-            data        TEXT NOT NULL)",
+            date        INTEGER NOT NULL,
+            data_0      TEXT NOT NULL,
+            data_1      TEXT NOT NULL)",
             [],
         )?;
         Ok(Self { db })
@@ -205,11 +205,11 @@ impl Database {
 
     pub fn add_coins(&self, coin: &Coin) -> Result<(), Error> {
         self.db.execute(
-            "INSERT INTO coins      (coin, price, date, data)
-            VALUES                  (:coin, :price, :date, :data)
+            "INSERT INTO coins      (coin, date, data_0, data_1)
+            VALUES                  (:coin, :date, :data_0, :data_1)
             ON CONFLICT (coin) DO
-            UPDATE SET price=:price,date=:date,data=:data",
-            params!(coin.coin, coin.price_usd, coin.date, coin.data),
+            UPDATE SET date=:date,data_0=:data_0,data_1=:data_1",
+            params!(coin.coin, coin.date, coin.data_0, coin.data_1),
         )?;
 
         Ok(())
@@ -217,16 +217,16 @@ impl Database {
 
     pub fn check_coins(&self, coin: &str) -> Result<Option<Coin>, Error> {
         let mut statement = self.db.prepare(
-            "SELECT coin, price, date, data
+            "SELECT coin, date, data_0, data_1
             FROM coins
             WHERE coin = :coin",
         )?;
         let rows = statement.query_map(params![coin], |r| {
             Ok(Coin {
                 coin: r.get(0)?,
-                price_usd: r.get(1)?,
-                date: r.get(2)?,
-                data: r.get(3)?,
+                date: r.get(1)?,
+                data_0: r.get(2)?,
+                data_1: r.get(3)?,
             })
         })?;
 
