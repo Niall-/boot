@@ -164,7 +164,7 @@ pub fn print_weather(weather: CurrentWeather) -> String {
         600..=622 => format!("{}, {}% cv", description, weather.clouds.all),
         // clouds
         801..=804 => format!("{}, {}% cv", description, weather.clouds.all),
-        _ => uppercase(&weather.weather[0].description),
+        _ => description,
     };
 
     // OpenWeatherMap provides sunrise/sunset in UTC (Unix time)
@@ -326,7 +326,7 @@ pub async fn get_coins(coin: &str) -> Result<Coin, Error> {
 fn print_date(date: i64) -> String {
     let date = (date / 1000).to_string();
     let time = NaiveDateTime::parse_from_str(&date, "%s").unwrap();
-    time.format("(%a %d %T)").to_string()
+    time.format("(%a %d %T UTC)").to_string()
 }
 
 // the following is adapted from
