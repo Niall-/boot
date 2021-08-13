@@ -156,7 +156,7 @@ async fn main() -> Result<(), failure::Error> {
 
                 let mut tokens = line.unwrap().split_whitespace();
 
-                let coins = ["btc", "bitcoin", "eth", "ethereum"];
+                let coins = ["btc", "bitcoin", "eth", "ethereum", "coin", "coins", "shitcoins"];
 
                 // i.e., 'boot: command'
                 match tokens.next().map(|t| t.to_lowercase()) {
@@ -166,7 +166,7 @@ async fn main() -> Result<(), failure::Error> {
                     }
 
                     Some(c) if c == "help" => {
-                        let response = "Commands: repo | seen <nick> | tell <nick> <message> | weather <location>";
+                        let response = "Commands: repo | seen <nick> | tell <nick> <message> | weather <location> | loc <location> | <coins|btc|eth>";
                         client.send_privmsg(msg.target, response).unwrap();
                     }
 
