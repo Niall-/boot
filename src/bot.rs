@@ -230,7 +230,7 @@ struct Coins {
     volume: f32,
 }
 
-pub async fn get_coins(coin: &str) -> Result<Coin, Error> {
+pub async fn get_coins(coin: &str, time_frame: &str) -> Result<Coin, Error> {
     // TODO: add this to settings
     let opt = WebpageOptions {
         allow_insecure: true,
@@ -241,14 +241,21 @@ pub async fn get_coins(coin: &str) -> Result<Coin, Error> {
         useragent: format!("Mozilla/5.0 boot-bot-rs/1.3.0"),
     };
 
+    let (limit, time) = match time_frame {
+        "15m" => (96, "15m"),
+        "7D" => (8, "1D"),
+        "14D" => (15, "1D"),
+        "30D" => (31, "1D"),
+        _ => (8, "1D"),
+    };
+
     // we should be getting the correct coin name for this
     let url = format!(
-        "https://api-pub.bitfinex.com/v2/candles/trade:15m:{}/hist?limit=96",
-        coin
+        "https://api-pub.bitfinex.com/v2/candles/trade:{}:{}/hist?limit={}",
+        time, coin, limit
     );
 
     let page = Webpage::from_url(&url, opt)?;
-
 
     // TODO - status codes
     //if page.http.response_code == 429 {
@@ -265,17 +272,29 @@ pub async fn get_coins(coin: &str) -> Result<Coin, Error> {
     let mut mean: f32 = 0.0;
 
     // what we want is the min, max, mean, values the prices
-    // we also want the prices every hour (count % 4 == 0)
+    // we also want the prices every hour (count % 4 == 0) for 15m values
     // the initial value is to colour code the initial bar which
     // will be coins[3] since we're only keeping hourly prices
+    //
+    // for weekly/fortnight values we collect an extra day for the initial value
     for c in &coins {
         if count == 0 {
             initial = c.close;
             min = (c.close, count);
             max = (c.close, count);
         } else {
-            if count % 4 == 0 {
-                prices.push(c.close);
+            match time_frame {
+                "15m" => {
+                    if count % 4 == 0 {
+                        prices.push(c.close);
+                    }
+                }
+                "30D" => {
+                    if count % 2 == 0 {
+                        prices.push(c.close);
+                    }
+                }
+                _ => prices.push(c.close),
             }
             if c.close > max.0 {
                 max = (c.close, count);
@@ -296,20 +315,20 @@ pub async fn get_coins(coin: &str) -> Result<Coin, Error> {
         "{} begin: ${} {} {} end: ${} {}",
         coin,
         coins[0].close,
-        print_date(coins[0].mts),
+        print_date(coins[0].mts, time_frame),
         graph,
         coins[len - 1].close,
-        print_date(coins[len - 1].mts),
+        print_date(coins[len - 1].mts, time_frame),
     );
 
     let stats = format!(
         "{} high: ${} {} // mean: ${} // low: ${} {}",
         coin,
         max.0,
-        print_date(coins[max.1].mts),
+        print_date(coins[max.1].mts, time_frame),
         mean,
         min.0,
-        print_date(coins[min.1].mts),
+        print_date(coins[min.1].mts, time_frame),
     );
 
     let recent = coins.pop().unwrap();
@@ -323,10 +342,13 @@ pub async fn get_coins(coin: &str) -> Result<Coin, Error> {
     Ok(result)
 }
 
-fn print_date(date: i64) -> String {
+fn print_date(date: i64, time_frame: &str) -> String {
     let date = (date / 1000).to_string();
     let time = NaiveDateTime::parse_from_str(&date, "%s").unwrap();
-    time.format("(%a %d %T UTC)").to_string()
+    match time_frame {
+        "7D" | "14D" | "30D" => time.format("(%v %T UTC)").to_string(),
+        _ => time.format("(%a %d %T UTC)").to_string(),
+    }
 }
 
 // the following is adapted from

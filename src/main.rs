@@ -156,7 +156,27 @@ async fn main() -> Result<(), failure::Error> {
 
                 let mut tokens = line.unwrap().split_whitespace();
 
-                let coins = ["btc", "bitcoin", "eth", "ethereum", "coin", "coins", "shitcoins"];
+                let coins = [
+                    "btc",
+                    "bitcoin",
+                    "eth",
+                    "ethereum",
+                    "coin",
+                    "coins",
+                    "shitcoins",
+                ];
+                let coin_times = [
+                    "w",
+                    "1w",
+                    "week",
+                    "weekly",
+                    "2w",
+                    "fortnight",
+                    "fortnightly",
+                    "4w",
+                    "30d",
+                    "month",
+                ];
 
                 // i.e., 'boot: command'
                 match tokens.next().map(|t| t.to_lowercase()) {
@@ -166,7 +186,8 @@ async fn main() -> Result<(), failure::Error> {
                     }
 
                     Some(c) if c == "help" => {
-                        let response = "Commands: repo | seen <nick> | tell <nick> <message> | weather <location> | loc <location> | <coins|btc|eth>";
+                        let response = "Commands: repo | seen <nick> | tell <nick> <message> | weather <location>\
+                                        | loc <location> | <coins|btc|eth> <week|fortnight|month>";
                         client.send_privmsg(msg.target, response).unwrap();
                     }
 
@@ -176,8 +197,25 @@ async fn main() -> Result<(), failure::Error> {
                             "eth" | "ethereum" => "tETHUSD",
                             _ => "tBTCUSD",
                         };
+                        let mut time_frame = "15m";
+                        match tokens.next() {
+                            // this won't handle non-lowercase input
+                            Some(n) if coin_times.iter().any(|e| e == &n) => {
+                                time_frame = match n {
+                                    "w" | "1w" | "week" | "weekly" => "7D",
+                                    "2w" | "fortnight" | "fortnightly" => "14D",
+                                    "4w" | "30d" | "month" => "30D",
+                                    _ => "14D",
+                                };
+                            }
+                            Some(_) => (),
+                            None => (),
+                        }
 
-                        let dbcoin = db.check_coins(&coin);
+                        let dbcoin = match time_frame {
+                            "15m" => db.check_coins(&coin),
+                            _ => Ok(None),
+                        };
 
                         let check = match dbcoin {
                             Ok(Some(c)) => {
@@ -205,7 +243,7 @@ async fn main() -> Result<(), failure::Error> {
                             let ftarget = msg.target.clone();
                             let tx2 = tx2.clone();
                             tokio::spawn(async move {
-                                let coins = bot::get_coins(&coin).await;
+                                let coins = bot::get_coins(&coin, &time_frame).await;
                                 match coins {
                                     Ok(coins) => {
                                         let coin = coins.clone();
