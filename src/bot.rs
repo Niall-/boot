@@ -243,10 +243,10 @@ pub async fn get_coins(coin: &str, time_frame: &str) -> Result<Coin, Error> {
 
     let (limit, time) = match time_frame {
         "15m" => (96, "15m"),
-        "7D" => (8, "1D"),
-        "14D" => (15, "1D"),
+        "7D" => (29, "6h"),
+        "14D" => (29, "12h"),
         "30D" => (31, "1D"),
-        _ => (8, "1D"),
+        _ => (29, "6h"),
     };
 
     // we should be getting the correct coin name for this
@@ -286,11 +286,6 @@ pub async fn get_coins(coin: &str, time_frame: &str) -> Result<Coin, Error> {
             match time_frame {
                 "15m" => {
                     if count % 4 == 0 {
-                        prices.push(c.close);
-                    }
-                }
-                "30D" => {
-                    if count % 2 == 0 {
                         prices.push(c.close);
                     }
                 }
@@ -346,7 +341,7 @@ fn print_date(date: i64, time_frame: &str) -> String {
     let date = (date / 1000).to_string();
     let time = NaiveDateTime::parse_from_str(&date, "%s").unwrap();
     match time_frame {
-        "7D" | "14D" | "30D" => time.format("(%v %T UTC)").to_string(),
+        "7D" | "14D" | "30D" => time.format("(%v)").to_string(),
         _ => time.format("(%a %d %T UTC)").to_string(),
     }
 }
