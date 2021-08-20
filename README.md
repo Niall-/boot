@@ -23,7 +23,7 @@ Planned features:
 - A quote database
 - Some common IRC games(IdleRPG, etc)
 
-###### For developers
+## For developers
 
 Current dependencies are SQLite, OpenSSL, and cURL. Adding features isn't too
 complicated although it's a little unergonomic, argument parsing and dealing
@@ -32,6 +32,7 @@ in src/bot.rs. This is likely to change at some point although not by much.
 
 To compile and run, simply compile with cargo as follows:
 > cargo build --release
+
 and run the binary in a folder with the necessary config file.
 
 Pull requests are welcome, just please ensure that they compile and are stable.
