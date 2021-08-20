@@ -179,19 +179,24 @@ async fn main() -> Result<(), failure::Error> {
                 ];
 
                 // i.e., 'boot: command'
-                match tokens.next().map(|t| t.to_lowercase()) {
-                    Some(c) if c == "repo" => {
+                let next = tokens
+                    .next()
+                    .map(|t| t.to_lowercase())
+                    .unwrap_or(format!("help"));
+
+                match next.as_ref() {
+                    "repo" => {
                         let response = "https://github.com/niall-/boot";
                         client.send_privmsg(msg.target, response).unwrap();
                     }
 
-                    Some(c) if c == "help" => {
-                        let response = "Commands: repo | seen <nick> | tell <nick> <message> | weather <location>\
+                    "help" => {
+                        let response = "Commands: repo | seen <nick> | tell <nick> <message> | weather <location> \
                                         | loc <location> | <coins|btc|eth> <week|fortnight|month>";
                         client.send_privmsg(msg.target, response).unwrap();
                     }
 
-                    Some(c) if coins.iter().any(|e| e == &c) => {
+                    c if coins.iter().any(|e| e == &c) => {
                         let coin = match c.as_ref() {
                             "btc" | "bitcoin" => "tBTCUSD",
                             "eth" | "ethereum" => "tETHUSD",
@@ -199,9 +204,8 @@ async fn main() -> Result<(), failure::Error> {
                         };
                         let mut time_frame = "15m";
                         match tokens.next() {
-                            // this won't handle non-lowercase input
-                            Some(n) if coin_times.iter().any(|e| e == &n) => {
-                                time_frame = match n {
+                            Some(n) if coin_times.iter().any(|e| e == &n.to_lowercase()) => {
+                                time_frame = match n.to_lowercase().as_ref() {
                                     "w" | "1w" | "week" | "weekly" => "7D",
                                     "2w" | "fortnight" | "fortnightly" => "14D",
                                     "4w" | "30d" | "month" => "30D",
@@ -269,7 +273,7 @@ async fn main() -> Result<(), failure::Error> {
                     // TODO: figure out the borrowowing issue(s?) so code doesn't have to be
                     // duplicated as much here, and especially so that it can be
                     // separated out into its own functions
-                    Some(c) if c == "weather" => {
+                    "weather" => {
                         if api_key == None {
                             continue;
                         }
@@ -389,7 +393,7 @@ async fn main() -> Result<(), failure::Error> {
                         }
                     }
 
-                    Some(c) if c == "loc" => {
+                    "loc" => {
                         let location = tokens.as_str();
                         let loc = db.check_location(location);
 
@@ -436,7 +440,7 @@ async fn main() -> Result<(), failure::Error> {
                         }
                     }
 
-                    Some(c) if c == "seen" => match tokens.next() {
+                    "seen" => match tokens.next() {
                         Some(nick) => {
                             let response = check_seen(nick, &db);
                             client.send_privmsg(msg.target, response).unwrap();
@@ -447,7 +451,7 @@ async fn main() -> Result<(), failure::Error> {
                         }
                     },
 
-                    Some(c) if c == "tell" => match tokens.next() {
+                    "tell" => match tokens.next() {
                         Some(nick) => {
                             let entry = Notification {
                                 id: 0,
