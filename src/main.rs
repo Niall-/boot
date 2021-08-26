@@ -185,12 +185,12 @@ async fn main() -> Result<(), failure::Error> {
                     .unwrap_or(format!("help"));
 
                 match next.as_ref() {
-                    "repo" => {
+                    "repo" | "git"  => {
                         let response = "https://github.com/niall-/boot";
                         client.send_privmsg(msg.target, response).unwrap();
                     }
 
-                    "help" => {
+                    "help" | "man" | "manual" => {
                         let response = "Commands: repo | seen <nick> | tell <nick> <message> | weather <location> \
                                         | loc <location> | <coins|btc|eth> <week|fortnight|month>";
                         client.send_privmsg(msg.target, response).unwrap();
@@ -393,7 +393,7 @@ async fn main() -> Result<(), failure::Error> {
                         }
                     }
 
-                    "loc" => {
+                    "loc" | "location" => {
                         let location = tokens.as_str();
                         let loc = db.check_location(location);
 
