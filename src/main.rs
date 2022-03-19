@@ -127,34 +127,47 @@ async fn main() -> Result<(), failure::Error> {
 
                 let nick = client.current_nickname().to_lowercase();
 
-                if msg.content.starts_with("nn") {
-                    let response = match &msg.content {
-                        c if c.to_lowercase().contains(&nick) => format!("nn {}", &msg.source),
-                        _ => format!("nn"),
-                    };
-                    client.send_privmsg(&msg.target, response).unwrap();
-                }
+                let mut tokens = msg.content.split_whitespace();
+                let next = tokens.next();
 
-                // past this point we only care about interactions with the bot
-                let line = match &msg.content {
-                    c if c.starts_with("./") => c.strip_prefix("./"),
-                    c if c.starts_with(".") => c.strip_prefix("."),
-                    c if c.starts_with("!") => c.strip_prefix("!"),
-                    c if c.to_lowercase().starts_with(&nick) => {
-                        let whitespace = c.find(char::is_whitespace);
-                        match whitespace {
-                            Some(w) => c.strip_prefix(&c[..w + 1]),
-                            None => None,
+                let mut bot_prefix: Option<&str> = None;
+
+                match next {
+                    // easter eggs
+                    // TODO: add support for parsing from file
+                    Some(n) if n == "nn" => {
+                        let response = match &msg.content {
+                            c if c.to_lowercase().contains(&nick) => format!("nn {}", &msg.source),
+                            _ => format!("nn"),
+                        };
+                        client.send_privmsg(&msg.target, response).unwrap();
+                        continue;
+                    }
+
+                    // interactions with the bot i.e., '.help'
+                    Some(n) => {
+                        bot_prefix = match n {
+                            c if c.starts_with("./") => c.strip_prefix("./"),
+                            // some people like to say just '.' or '!' in irc so
+                            // we'll check the length to maker sure they're
+                            // actually trying to interact with the bot
+                            c if (c.starts_with(".") && c.len() > 1) => c.strip_prefix("."),
+                            c if (c.starts_with("!") && c.len() > 1) => c.strip_prefix("!"),
+                            c if c.to_lowercase().starts_with(&nick) => match tokens.next() {
+                                Some(n) => Some(n),
+                                None => Some("help"),
+                            },
+                            _ => None,
                         }
                     }
-                    _ => None,
-                };
-
-                if !line.is_some() {
-                    continue;
+                    _ => (),
                 }
 
-                let mut tokens = line.unwrap().split_whitespace();
+                // if there's no '`boot:` help' or '`.`help' there's nothing
+                // left to do, so continue with our day
+                if !bot_prefix.is_some() {
+                    continue;
+                }
 
                 let coins = [
                     "btc",
@@ -178,14 +191,8 @@ async fn main() -> Result<(), failure::Error> {
                     "month",
                 ];
 
-                // i.e., 'boot: command'
-                let next = tokens
-                    .next()
-                    .map(|t| t.to_lowercase())
-                    .unwrap_or(format!("help"));
-
-                match next.as_ref() {
-                    "repo" | "git"  => {
+                match bot_prefix.unwrap() {
+                    "repo" | "git" => {
                         let response = "https://github.com/niall-/boot";
                         client.send_privmsg(msg.target, response).unwrap();
                     }
