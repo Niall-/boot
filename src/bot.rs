@@ -2,38 +2,37 @@ use crate::sqlite::{Database, Location};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use chrono_humanize::{Accuracy, HumanTime, Tense};
 use failure::Error;
+use futures::future::try_join_all;
 use openweathermap::blocking::weather;
 use openweathermap::CurrentWeather;
 use serde::Deserialize;
 use std::f32::MAX as f32_max;
 use std::time::Duration as STDDuration;
+use tokio::task::spawn_blocking;
 use urlencoding::encode;
 use webpage::{Webpage, WebpageOptions};
 
 pub async fn process_titles(links: Vec<(String, String)>) -> Vec<(String, String)> {
     // the following is adapted from
     // https://stackoverflow.com/questions/63434977/how-can-i-spawn-asynchronous-methods-in-a-loop
-    let tasks: Vec<_> = links
-        .into_iter()
-        .map(|(t, l)| tokio::spawn(async { fetch_title(t, l).await }))
-        .collect();
-
-    let mut titles = Vec::new();
-    for task in tasks {
-        let fetched = task.await.unwrap();
-        match fetched.1 {
-            Some(title) => {
+    try_join_all(links.into_iter().map(|(t, l)| {
+        spawn_blocking(|| {
+            if let (target, Some(title)) = fetch_title(t, l) {
                 let response = format!("↪ {}", title.replace("\n", " "));
-                titles.push((fetched.0, response));
+                Some((target, response))
+            } else {
+                None
             }
-            None => (),
-        }
-    }
-
-    titles
+        })
+    }))
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .filter_map(|u| u)
+    .collect()
 }
 
-async fn fetch_title(target: String, url: String) -> (String, Option<String>) {
+fn fetch_title(target: String, url: String) -> (String, Option<String>) {
     //let response = reqwest::get(title).await.ok()?.text().await.ok()?;
     //let page = webpage::HTML::from_string(response, None);
     let opt = WebpageOptions {
