@@ -6,8 +6,8 @@ mod messages;
 mod settings;
 mod sqlite;
 //use crate::bot::{check_notification, check_seen, Coin};
-use crate::messages::Msg;
 use crate::bot::Coin;
+use crate::messages::Msg;
 use crate::settings::Settings;
 use crate::sqlite::{Database, Location, Notification, Seen};
 use irc::client::ClientStream;
@@ -113,8 +113,7 @@ async fn main() -> Result<(), failure::Error> {
                 };
             }
             BotCommand::Message(msg) => {
-                let tx2 = tx2.clone();
-                bot::process_messages(msg, &db, &client, api_key.clone(), tx2).await;
+                bot::process_messages(msg, &db, &client, api_key.clone(), &tx2).await;
             }
         }
     }

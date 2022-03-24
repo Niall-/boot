@@ -19,7 +19,7 @@ pub async fn process_messages(
     db: &Database,
     client: &crate::Client,
     api_key: Option<String>,
-    tx2: mpsc::Sender<BotCommand>,
+    tx2: &mpsc::Sender<BotCommand>,
 ) {
     // HACK: check_notification only returns at most 2 notifications
     // if user alice spams user bob with notifications, when bob speaks he will be spammed with all
