@@ -125,6 +125,10 @@ async fn main() -> Result<(), failure::Error> {
                     client.send_privmsg(&msg.target, &n).unwrap();
                 }
 
+                if msg.content.contains("oi") {
+                    client.send_privmsg(&msg.target, "oi").unwrap();
+                }
+
                 let nick = client.current_nickname().to_lowercase();
 
                 let mut tokens = msg.content.split_whitespace();
