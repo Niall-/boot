@@ -169,6 +169,8 @@ async fn main() -> Result<(), failure::Error> {
                     continue;
                 }
 
+                // TODO: add more coins https://docs.bitfinex.com/reference#rest-public-tickers
+                // https://api-pub.bitfinex.com/v2/conf/pub:list:pair:exchange
                 let coins = [
                     "btc",
                     "bitcoin",
@@ -177,6 +179,8 @@ async fn main() -> Result<(), failure::Error> {
                     "coin",
                     "coins",
                     "shitcoins",
+                    "etc",
+                    "doge",
                 ];
                 let coin_times = [
                     "w",
@@ -199,7 +203,7 @@ async fn main() -> Result<(), failure::Error> {
 
                     "help" | "man" | "manual" => {
                         let response = "Commands: repo | seen <nick> | tell <nick> <message> | weather <location> \
-                                        | loc <location> | <coins|btc|eth> <week|fortnight|month>";
+                                        | loc <location> | <coins|btc|eth|etc|doge> <week|fortnight|month>";
                         client.send_privmsg(msg.target, response).unwrap();
                     }
 
@@ -207,6 +211,8 @@ async fn main() -> Result<(), failure::Error> {
                         let coin = match c.as_ref() {
                             "btc" | "bitcoin" => "tBTCUSD",
                             "eth" | "ethereum" => "tETHUSD",
+                            "etc" => "tETCUSD",
+                            "doge" => "tDOGE:USD",
                             _ => "tBTCUSD",
                         };
                         let mut time_frame = "15m";
