@@ -14,44 +14,23 @@ use tokio::task::spawn_blocking;
 use urlencoding::encode;
 use webpage::{Webpage, WebpageOptions};
 
-pub async fn process_messages(
-    msg: crate::Msg,
-    db: &Database,
-    client: &crate::Client,
-    api_key: Option<String>,
-    tx2: &mpsc::Sender<BotCommand>,
-) {
-    // HACK: check_notification only returns at most 2 notifications
-    // if user alice spams user bob with notifications, when bob speaks he will be spammed with all
-    // of those notifications at once (with some rate limiting provided by the irc crate), with
-    // this hack bob will only ever receive 2 messages when he speaks, giving some end user control
-    // for whether the channel is going to be spammed
-    // some ways to fix this: some persistence allowing for a user to receive any potential
-    // messages over pm, limit number of messages a user can receive, etc
-    let notifications = check_notification(&msg.source, &db);
-    for n in notifications {
-        client.send_privmsg(&msg.target, &n).unwrap();
-    }
+enum Command<'a> {
+    Ignore,
+    Message(&'a str),
+    Seen(&'a str),
+    Tell(&'a str, &'a str),
+    Weather(Option<&'a str>),
+    Location(&'a str),
+    Coins(&'a str, &'a str),
+}
 
-    let nick = client.current_nickname().to_lowercase();
-
-    let mut tokens = msg.content.split_whitespace();
+fn process_commands<'a>(nick: &'a str, msg: &'a str) -> Command<'a> {
+    let mut tokens = msg.split_whitespace();
     let next = tokens.next();
 
     let mut bot_prefix: Option<&str> = None;
 
     match next {
-        // easter eggs
-        // TODO: add support for parsing from file
-        Some(n) if n == "nn" => {
-            let response = match &msg.content {
-                c if c.to_lowercase().contains(&nick) => format!("nn {}", &msg.source),
-                _ => format!("nn"),
-            };
-            client.send_privmsg(&msg.target, response).unwrap();
-            return ();
-        }
-
         // interactions with the bot i.e., '.help'
         Some(n) => {
             bot_prefix = match n {
@@ -74,7 +53,7 @@ pub async fn process_messages(
     // if there's no '`boot:` help' or '`.`help' there's nothing
     // left to do, so continue with our day
     if !bot_prefix.is_some() {
-        return ();
+        return Command::Ignore;
     }
 
     // TODO: add more coins https://docs.bitfinex.com/reference#rest-public-tickers
@@ -90,33 +69,281 @@ pub async fn process_messages(
         "etc",
         "doge",
     ];
-    let coin_times = [
-        "w",
-        "1w",
-        "week",
-        "weekly",
-        "2w",
-        "fortnight",
-        "fortnightly",
-        "4w",
-        "30d",
-        "month",
-    ];
 
     match bot_prefix.unwrap() {
-        "repo" | "git" => {
-            let response = "https://github.com/niall-/boot";
-            client.send_privmsg(msg.target, response).unwrap();
-        }
-
         "help" | "man" | "manual" => {
             let response =
                 "Commands: repo | seen <nick> | tell <nick> <message> | weather <location> \
-                        | loc <location> | <coins|btc|eth|etc|doge> <week|fortnight|month>";
+                        | loc <location> | <coins|btc|eth|etc|doge> \
+                        <15m(default)|week|fortnight|month>";
+            Command::Message(response)
+        }
+        "repo" | "git" => Command::Message("https://github.com/niall-/boot"),
+        "seen" => match tokens.next() {
+            Some(nick) if (nick.len() > 0) => Command::Seen(nick),
+            Some(_) => Command::Message("Hint: seen <nick>"),
+            None => Command::Message("Hint: seen <nick>"),
+        },
+        "tell" => match tokens.next() {
+            Some(nick) => match tokens.as_str().trim() {
+                message if (message.len() > 0) => Command::Tell(nick, message),
+                _ => Command::Message("Hint: tell <nick> <message>"),
+            },
+            None => Command::Message("Hint: tell <nick> <message>"),
+        },
+        "weather" => match tokens.as_str().trim() {
+            loc if (loc.len() > 0) => Command::Weather(Some(loc)),
+            _ => Command::Weather(None),
+        },
+        "loc" | "location" => match tokens.as_str().trim() {
+            loc if (loc.len() > 0) => Command::Location(loc),
+            _ => Command::Message("Hint: loc|location <location>"),
+        },
+        c if coins.iter().any(|e| e == &c) => {
+            let coin_times = [
+                "15m",
+                "w",
+                "1w",
+                "week",
+                "weekly",
+                "2w",
+                "fortnight",
+                "fortnightly",
+                "4w",
+                "30d",
+                "month",
+            ];
+            let coin_time = match tokens.next() {
+                Some(n) if coin_times.iter().any(|e| e == &n.to_lowercase()) => {
+                    match n.to_lowercase().as_ref() {
+                        "15m" | "15 minutes" | "quarter of an hour" => "15m",
+                        "w" | "1w" | "week" | "weekly" => "7D",
+                        "2w" | "fortnight" | "fortnightly" => "14D",
+                        "4w" | "30d" | "month" => "30D",
+                        _ => "14D",
+                    }
+                }
+                Some(_) => "15m",
+                None => "15m",
+            };
+            Command::Coins(c, coin_time)
+        }
+        _ => Command::Ignore,
+    }
+}
+
+pub async fn process_messages(
+    msg: crate::Msg,
+    db: &Database,
+    client: &crate::Client,
+    api_key: Option<String>,
+    tx2: &mpsc::Sender<BotCommand>,
+) {
+    // HACK: check_notification only returns at most 2 notifications
+    // if user alice spams user bob with notifications, when bob speaks he will be spammed with all
+    // of those notifications at once (with some rate limiting provided by the irc crate), with
+    // this hack bob will only ever receive 2 messages when he speaks, giving some end user control
+    // for whether the channel is going to be spammed
+    // some ways to fix this: some persistence allowing for a user to receive any potential
+    // messages over pm, limit number of messages a user can receive, etc
+    let notifications = check_notification(&msg.source, &db);
+    for n in notifications {
+        client.send_privmsg(&msg.target, &n).unwrap();
+    }
+
+    //// easter eggs
+    //// TODO: add support for parsing from file
+    //Some(n) if n == "nn" => {
+    //    let response = match &msg.content {
+    //        c if c.to_lowercase().contains(&nick) => format!("nn {}", &msg.source),
+    //        _ => format!("nn"),
+    //    };
+    //    client.send_privmsg(&msg.target, response).unwrap();
+    //    return ();
+    //}
+
+    let nick = client.current_nickname().to_lowercase();
+    let command = process_commands(&nick, &msg.content);
+
+    match command {
+        Command::Message(m) => client.send_privmsg(msg.target, m).unwrap(),
+        Command::Seen(n) => {
+            let response = check_seen(n, &db);
+            client.send_privmsg(msg.target, response).unwrap()
+        }
+        Command::Tell(n, m) => {
+            let entry = Notification {
+                id: 0,
+                recipient: n.to_string(),
+                via: msg.source,
+                message: m.to_string(),
+            };
+            if let Err(err) = db.add_notification(&entry) {
+                println!("SQL error adding notification: {}", err);
+                return ();
+            }
+            let response = format!("Ok, I'll tell {} that", n);
             client.send_privmsg(msg.target, response).unwrap();
         }
+        // TODO: figure out the borrowowing issue(s?) so code doesn't have to be
+        // duplicated as much here, and especially so that it can be
+        // separated out into its own functions
+        Command::Weather(l) => {
+            if api_key == None {
+                return ();
+            }
+            let key = api_key.as_ref().unwrap().clone();
 
-        c if coins.iter().any(|e| e == &c) => {
+            let mut location = String::new();
+            let mut coords: Option<String> = None;
+
+            match l {
+                // check to see if we have the location already stored
+                None => match db.check_weather(&msg.source) {
+                    Ok(Some((lat, lon))) => coords = Some(format!("{},{}", lat, lon)),
+                    Ok(None) => {
+                        let response = format!("Hint: weather <location>");
+                        client.send_privmsg(&msg.target, response).unwrap();
+                        return ();
+                    }
+                    Err(err) => println!("Error checking weather: {}", err),
+                },
+
+                // update user's weather preference and fetch coordinates
+                Some(l) => {
+                    location = l.to_string();
+                    let loc = db.check_location(&l);
+                    match loc {
+                        Ok(Some(l)) => {
+                            coords = Some(format!("{},{}", &l.lat, &l.lon));
+                            tx2.send(BotCommand::UpdateWeather(msg.source.clone(), l.lat, l.lon))
+                                .await
+                                .unwrap();
+                        }
+                        Ok(None) => (),
+                        Err(err) => println!("Error checking location: {}", err),
+                    }
+                }
+            }
+
+            match coords {
+                // we have the coords already, all we need now is the weather
+                Some(coords) => {
+                    let tx2 = tx2.clone();
+                    let ftarget = msg.target.clone();
+
+                    tokio::spawn(async move {
+                        let weather = get_weather(&coords, &key).await;
+                        match weather {
+                            Ok(weather) => {
+                                let pretty = print_weather(weather);
+                                tx2.send(BotCommand::Privmsg((ftarget, pretty)))
+                                    .await
+                                    .unwrap();
+                            }
+                            Err(err) => {
+                                println!("weather isn't initialised: {}", err);
+                            }
+                        }
+                    });
+                }
+
+                // we don't have coords for the location
+                // this is the worst case scenario
+                None => {
+                    let tx2 = tx2.clone();
+                    let ftarget = msg.target.clone();
+                    let fsource = msg.source.clone();
+
+                    tokio::spawn(async move {
+                        let fetched_location = get_location(&location).await;
+                        #[allow(unused_assignments)]
+                        let mut coords: Option<String> = None;
+
+                        match fetched_location {
+                            Ok(Some(l)) => {
+                                let lat = l.lat.clone();
+                                let lon = l.lon.clone();
+
+                                coords = Some(format!("{},{}", &lat, &lon));
+
+                                tx2.send(BotCommand::UpdateWeather(fsource, lat, lon))
+                                    .await
+                                    .unwrap();
+                                tx2.send(BotCommand::UpdateLocation(location, l))
+                                    .await
+                                    .unwrap();
+                            }
+
+                            Ok(None) => {
+                                let response = format!("Unable to fetch location for {}", location);
+                                println!("{}", &response);
+                                tx2.send(BotCommand::Privmsg((ftarget, response)))
+                                    .await
+                                    .unwrap();
+                                return ();
+                            }
+                            Err(err) => {
+                                println!("Error fetching location data: {}", err);
+                                return ();
+                            }
+                        }
+
+                        match get_weather(&coords.unwrap(), &key).await {
+                            //let weather = get_weather(&lcoords.unwrap(), &key).await;
+                            //match weather {
+                            Ok(weather) => {
+                                let pretty = print_weather(weather);
+                                tx2.send(BotCommand::Privmsg((ftarget, pretty)))
+                                    .await
+                                    .unwrap();
+                            }
+                            Err(err) => {
+                                println!("weather isn't initialised: {}", err);
+                            }
+                        }
+                    });
+                }
+            }
+        }
+        Command::Location(l) => match db.check_location(l) {
+            Ok(Some(l)) => {
+                let response = format!(
+                    "https://www.openstreetmap.org/?mlat={}&mlon={}",
+                    l.lat, l.lon
+                );
+                client.send_privmsg(msg.target, response).unwrap();
+            }
+            Ok(None) => {
+                let tx2 = tx2.clone();
+                let flocation = l.to_string();
+                let ftarget = msg.target.clone();
+                let response = format!("No coordinates found for {} in database", l);
+                println!("{}", response);
+                tokio::spawn(async move {
+                    let fetched_location = get_location(&flocation).await;
+                    match fetched_location {
+                        Ok(Some(l)) => tx2
+                            .send(BotCommand::Location(flocation, ftarget, l))
+                            .await
+                            .unwrap(),
+                        Ok(None) => {
+                            let response =
+                                format!("Unable to fetch location data for {}", flocation);
+                            println!("{}", &response);
+                            tx2.send(BotCommand::Privmsg((ftarget, response)))
+                                .await
+                                .unwrap();
+                        }
+                        Err(err) => {
+                            println!("Error fetching location data for {}", err)
+                        }
+                    }
+                });
+            }
+            Err(err) => println!("Error fetching location from database: {}", err),
+        },
+        Command::Coins(c, t) => {
             let coin = match c.as_ref() {
                 "btc" | "bitcoin" => "tBTCUSD",
                 "eth" | "ethereum" => "tETHUSD",
@@ -124,21 +351,9 @@ pub async fn process_messages(
                 "doge" => "tDOGE:USD",
                 _ => "tBTCUSD",
             };
-            let mut time_frame = "15m";
-            match tokens.next() {
-                Some(n) if coin_times.iter().any(|e| e == &n.to_lowercase()) => {
-                    time_frame = match n.to_lowercase().as_ref() {
-                        "w" | "1w" | "week" | "weekly" => "7D",
-                        "2w" | "fortnight" | "fortnightly" => "14D",
-                        "4w" | "30d" | "month" => "30D",
-                        _ => "14D",
-                    };
-                }
-                Some(_) => (),
-                None => (),
-            }
 
-            let dbcoin = match time_frame {
+            // if coins are <15m, check the database for a cached entry
+            let dbcoin = match t {
                 "15m" => db.check_coins(&coin),
                 _ => Ok(None),
             };
@@ -168,6 +383,7 @@ pub async fn process_messages(
             if check {
                 let ftarget = msg.target.clone();
                 let tx2 = tx2.clone();
+                let time_frame = t.to_string();
                 tokio::spawn(async move {
                     let coins = get_coins(&coin, &time_frame).await;
                     match coins {
@@ -191,201 +407,8 @@ pub async fn process_messages(
                 });
             }
         }
-
-        // TODO: figure out the borrowowing issue(s?) so code doesn't have to be
-        // duplicated as much here, and especially so that it can be
-        // separated out into its own functions
-        "weather" => {
-            if api_key == None {
-                return ();
-            }
-            let key: String = api_key.as_ref().unwrap().to_string();
-            let tx2 = tx2.clone();
-            let location = tokens.as_str();
-            let source = msg.source.clone();
-            let mut coords: Option<String> = None;
-
-            match location.is_empty() {
-                true => match db.check_weather(&msg.source) {
-                    Ok(Some((lat, lon))) => coords = Some(format!("{},{}", lat, lon)),
-                    Ok(None) => {
-                        let response = format!("Please enter a location");
-                        client.send_privmsg(&msg.target, response).unwrap();
-                        return ();
-                    }
-                    Err(err) => println!("Error checking weather: {}", err),
-                },
-                false => {
-                    let loc = db.check_location(&location);
-                    match loc {
-                        Ok(Some(l)) => {
-                            coords = Some(format!("{},{}", &l.lat, &l.lon));
-                            tx2.send(BotCommand::UpdateWeather(source, l.lat, l.lon))
-                                .await
-                                .unwrap();
-                        }
-                        Ok(None) => (),
-                        Err(err) => println!("Error checking location: {}", err),
-                    }
-                }
-            }
-
-            match coords {
-                Some(coords) => {
-                    let tx2 = tx2.clone();
-                    let ftarget = msg.target.clone();
-
-                    tokio::spawn(async move {
-                        let weather = get_weather(&coords, &key).await;
-                        match weather {
-                            Ok(weather) => {
-                                let pretty = print_weather(weather);
-                                tx2.send(BotCommand::Privmsg((ftarget, pretty)))
-                                    .await
-                                    .unwrap();
-                            }
-                            Err(err) => {
-                                println!("weather isn't initialised: {}", err);
-                            }
-                        }
-                    });
-                }
-                None => {
-                    let tx2 = tx2.clone();
-                    let flocation = location.to_string().clone();
-                    let ftarget = msg.target.clone();
-                    let ftarget2 = msg.target.clone();
-                    let fsource = msg.source.clone();
-                    //let key = key.to_string().clone();
-                    tokio::spawn(async move {
-                        let fetched_location = get_location(&flocation).await;
-                        //let key = key.clone();
-                        let mut coords: Option<String> = None;
-
-                        match fetched_location {
-                            Ok(Some(l)) => {
-                                let lat = l.lat.clone();
-                                let lon = l.lon.clone();
-
-                                coords = Some(format!("{},{}", &lat, &lon));
-
-                                tx2.send(BotCommand::UpdateWeather(fsource, lat, lon))
-                                    .await
-                                    .unwrap();
-                                tx2.send(BotCommand::UpdateLocation(flocation, l))
-                                    .await
-                                    .unwrap();
-                            }
-                            Ok(None) => {
-                                let response =
-                                    format!("Unable to fetch location for {}", flocation);
-                                println!("{}", &response);
-                                tx2.send(BotCommand::Privmsg((ftarget, response)))
-                                    .await
-                                    .unwrap();
-                            }
-                            Err(err) => {
-                                println!("Error fetching location data: {}", err)
-                            }
-                        }
-
-                        match coords {
-                            Some(coords) => {
-                                let weather = get_weather(&coords, &key).await;
-                                match weather {
-                                    Ok(weather) => {
-                                        let pretty = print_weather(weather);
-                                        tx2.send(BotCommand::Privmsg((ftarget2, pretty)))
-                                            .await
-                                            .unwrap();
-                                    }
-                                    Err(err) => {
-                                        println!("weather isn't initialised: {}", err);
-                                    }
-                                }
-                            }
-                            None => (),
-                        }
-                    });
-                }
-            }
-        }
-
-        "loc" | "location" => {
-            let location = tokens.as_str();
-            let loc = db.check_location(location);
-
-            match loc {
-                Ok(Some(l)) => {
-                    let response = format!(
-                        "https://www.openstreetmap.org/?mlat={}&mlon={}",
-                        l.lat, l.lon
-                    );
-                    client.send_privmsg(msg.target, response).unwrap();
-                }
-                Ok(None) => {
-                    let tx2 = tx2.clone();
-                    let flocation = location.to_string().clone();
-                    let ftarget = msg.target.clone();
-                    let response = format!("No coordinates found for {} in database", location);
-                    println!("{}", response);
-                    tokio::spawn(async move {
-                        let fetched_location = get_location(&flocation).await;
-                        match fetched_location {
-                            Ok(Some(l)) => tx2
-                                .send(BotCommand::Location(flocation, ftarget, l))
-                                .await
-                                .unwrap(),
-                            Ok(None) => {
-                                let response =
-                                    format!("Unable to fetch location data for {}", flocation);
-                                println!("{}", &response);
-                                tx2.send(BotCommand::Privmsg((ftarget, response)))
-                                    .await
-                                    .unwrap();
-                            }
-                            Err(err) => {
-                                println!("Error fetching location data for {}", err)
-                            }
-                        }
-                    });
-                }
-                Err(err) => println!("Error fetching location from database: {}", err),
-            }
-        }
-
-        "seen" => match tokens.next() {
-            Some(nick) => {
-                let response = check_seen(nick, &db);
-                client.send_privmsg(msg.target, response).unwrap();
-            }
-            None => {
-                let response = "Hint: seen <nick>";
-                client.send_privmsg(msg.target, response).unwrap();
-            }
-        },
-
-        "tell" => match tokens.next() {
-            Some(nick) => {
-                let entry = Notification {
-                    id: 0,
-                    recipient: nick.to_string(),
-                    via: msg.source.to_string(),
-                    message: tokens.as_str().to_string(),
-                };
-                if let Err(err) = db.add_notification(&entry) {
-                    println!("SQL error adding notification: {}", err);
-                    return ();
-                }
-                let response = format!("ok, I'll tell {} that", nick);
-                client.send_privmsg(msg.target, response).unwrap();
-            }
-            None => {
-                let response = "Hint: tell <nick> <message";
-                client.send_privmsg(msg.target, response).unwrap();
-            }
-        },
-        _ => (),
+        Command::Ignore => (),
+        //_ => (),
     }
 }
 
@@ -495,10 +518,11 @@ pub async fn get_location(loc: &str) -> Result<Option<Location>, Error> {
     // something should be done about this soon to respect nominatim's TOS
     let url = format!(
         "https://nominatim.openstreetmap.org/search?q={}&format=json&addressdetails=1&limit=1",
-        &encode(loc)
+        &encode(&loc)
     );
 
     let page = Webpage::from_url(&url, opt)?;
+
     let mut entry: Vec<Location> = serde_json::from_str(&page.html.text_content)?;
 
     Ok(entry.pop())
