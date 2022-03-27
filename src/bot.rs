@@ -153,18 +153,22 @@ pub async fn process_messages(
         client.send_privmsg(&msg.target, &n).unwrap();
     }
 
-    //// easter eggs
-    //// TODO: add support for parsing from file
-    //Some(n) if n == "nn" => {
-    //    let response = match &msg.content {
-    //        c if c.to_lowercase().contains(&nick) => format!("nn {}", &msg.source),
-    //        _ => format!("nn"),
-    //    };
-    //    client.send_privmsg(&msg.target, response).unwrap();
-    //    return ();
-    //}
-
     let nick = client.current_nickname().to_lowercase();
+
+    // easter eggs
+    // TODO: add support for parsing from file
+    match &msg.content {
+        n if n.trim().starts_with("nn") => {
+            let response = match &msg.content {
+                c if c.to_lowercase().contains(&nick) => format!("nn {}", &msg.source),
+                _ => "nn".to_string(),
+            };
+            client.send_privmsg(&msg.target, response).unwrap();
+            return ();
+        }
+        _ => (),
+    }
+
     let command = process_commands(&nick, &msg.content);
 
     match command {
