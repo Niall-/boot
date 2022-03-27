@@ -68,13 +68,15 @@ fn process_commands<'a>(nick: &'a str, msg: &'a str) -> Command<'a> {
         "shitcoins",
         "etc",
         "doge",
+        "xmr",
+        "ltc",
     ];
 
     match bot_prefix.unwrap() {
         "help" | "man" | "manual" => {
             let response =
                 "Commands: repo | seen <nick> | tell <nick> <message> | weather <location> \
-                        | loc <location> | <coins|btc|eth|etc|doge> \
+                        | loc <location> | <coins|btc|eth|etc|doge|xmr|ltc> \
                         <15m(default)|week|fortnight|month>";
             Command::Message(response)
         }
@@ -349,6 +351,8 @@ pub async fn process_messages(
                 "eth" | "ethereum" => "tETHUSD",
                 "etc" => "tETCUSD",
                 "doge" => "tDOGE:USD",
+                "xmr" => "tXMRUSD",
+                "ltc" => "tLTCUSD",
                 _ => "tBTCUSD",
             };
 
