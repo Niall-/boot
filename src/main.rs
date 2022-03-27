@@ -15,22 +15,21 @@ use messages::process_message;
 use tokio::sync::mpsc;
 
 #[derive(Debug)]
-pub enum BotCommand {
-    Quit(String, String),
-    Privmsg((String, String)),
+pub enum Bot {
+    Message(Msg),
     Links(Vec<(String, String)>),
-    Seen(Seen),
-    Location(String, String, Location),
+    Privmsg(String, String),
+    UpdateSeen(Seen),
     UpdateWeather(String, String, String),
     UpdateLocation(String, Location),
     UpdateCoins(Coin),
-    Message(Msg),
+    Quit(String, String),
 }
 
 async fn run_bot(
     mut stream: ClientStream,
     current_nick: &str,
-    tx: mpsc::Sender<BotCommand>,
+    tx: mpsc::Sender<Bot>,
 ) -> Result<(), failure::Error> {
     while let Some(message) = stream.next().await.transpose()? {
         process_message(current_nick, &message, tx.clone()).await;
@@ -53,7 +52,7 @@ async fn main() -> Result<(), failure::Error> {
     let stream = client.stream()?;
     client.identify()?;
 
-    let (tx, mut rx) = mpsc::channel::<BotCommand>(32);
+    let (tx, mut rx) = mpsc::channel::<Bot>(32);
     let tx2 = tx.clone();
 
     let nick = client.current_nickname().to_string();
@@ -61,59 +60,46 @@ async fn main() -> Result<(), failure::Error> {
 
     while let Some(cmd) = rx.recv().await {
         match cmd {
-            BotCommand::Quit(t, m) => {
+            Bot::Message(msg) => {
+                bot::process_messages(msg, &db, &client, api_key.clone(), &tx2).await;
+            }
+            Bot::Links(u) => {
+                let tx2 = tx2.clone();
+                tokio::spawn(async move {
+                    let titles = bot::process_titles(u).await;
+                    for t in titles {
+                        tx2.send(Bot::Privmsg(t.0, t.1)).await.unwrap();
+                    }
+                });
+            }
+            Bot::Privmsg(t, m) => client.send_privmsg(t, m).unwrap(),
+            Bot::UpdateSeen(e) => {
+                if let Err(err) = db.add_seen(&e) {
+                    println!("SQL error adding seen: {}", err);
+                };
+            }
+            Bot::UpdateWeather(user, lat, lon) => {
+                if let Err(err) = db.add_weather(&user, &lat, &lon) {
+                    println!("SQL error updating weather: {}", err);
+                };
+            }
+            Bot::UpdateLocation(loc, e) => {
+                if let Err(err) = db.add_location(&loc, &e) {
+                    println!("SQL error updating location: {}", err);
+                };
+            }
+            Bot::UpdateCoins(coin) => {
+                if let Err(err) = db.add_coins(&coin) {
+                    println!("SQL error updating coins: {}", err);
+                };
+            }
+            Bot::Quit(t, m) => {
                 // this won't handle sanick, but it should be good enough
                 let nick = client.current_nickname().to_string();
                 if t == nick {
                     println!("Quit! {}, {}", t, m);
                     break;
                 }
-            }
-            BotCommand::Privmsg(m) => client.send_privmsg(m.0, m.1).unwrap(),
-            BotCommand::Links(u) => {
-                let tx2 = tx2.clone();
-                tokio::spawn(async move {
-                    let titles = bot::process_titles(u).await;
-                    for t in titles {
-                        tx2.send(BotCommand::Privmsg(t)).await.unwrap();
-                    }
-                });
-            }
-            BotCommand::Seen(e) => {
-                if let Err(err) = db.add_seen(&e) {
-                    println!("SQL error adding seen: {}", err);
-                };
-            }
-            BotCommand::Location(location, target, e) => {
-                if let Err(err) = db.add_location(&location, &e) {
-                    println!("SQL error adding location: {}", err);
-                };
-
-                let response = format!(
-                    "https://www.openstreetmap.org/?mlat={}&mlon={}",
-                    e.lat, e.lon
-                );
-                tx2.send(BotCommand::Privmsg((target, response)))
-                    .await
-                    .unwrap();
-            }
-            BotCommand::UpdateWeather(user, lat, lon) => {
-                if let Err(err) = db.add_weather(&user, &lat, &lon) {
-                    println!("SQL error updating weather: {}", err);
-                };
-            }
-            BotCommand::UpdateLocation(loc, e) => {
-                if let Err(err) = db.add_location(&loc, &e) {
-                    println!("SQL error updating location: {}", err);
-                };
-            }
-            BotCommand::UpdateCoins(coin) => {
-                if let Err(err) = db.add_coins(&coin) {
-                    println!("SQL error updating coins: {}", err);
-                };
-            }
-            BotCommand::Message(msg) => {
-                bot::process_messages(msg, &db, &client, api_key.clone(), &tx2).await;
             }
         }
     }

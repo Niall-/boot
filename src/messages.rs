@@ -1,5 +1,5 @@
 use crate::sqlite::Seen;
-use crate::BotCommand;
+use crate::Bot;
 use chrono::Utc;
 use irc::client::prelude::*;
 use linkify::{LinkFinder, LinkKind};
@@ -28,7 +28,7 @@ impl Msg {
     }
 }
 
-pub async fn process_message(current_nick: &str, message: &Message, tx: mpsc::Sender<BotCommand>) {
+pub async fn process_message(current_nick: &str, message: &Message, tx: mpsc::Sender<Bot>) {
     let source = message.source_nickname();
     let target = message.response_target();
     let nick = current_nick.to_string();
@@ -87,7 +87,7 @@ pub async fn process_message(current_nick: &str, message: &Message, tx: mpsc::Se
     };
 }
 
-async fn privmsg(msg: Msg, tx: mpsc::Sender<BotCommand>) {
+async fn privmsg(msg: Msg, tx: mpsc::Sender<Bot>) {
     if !msg.target.starts_with("#") {
         return;
     }
@@ -99,16 +99,14 @@ async fn privmsg(msg: Msg, tx: mpsc::Sender<BotCommand>) {
         .into_iter()
         .map(|x| (msg.target.to_string(), x.as_str().to_string()))
         .collect();
-    tx.send(BotCommand::Links(urls)).await.unwrap();
+    tx.send(Bot::Links(urls)).await.unwrap();
 
     if msg.content.contains("🥾") || msg.content.contains("👢") {
         let y: f64 = random::<f64>();
         if y > 0.975 {
             let response = "https://www.youtube.com/watch?v=tfMcxmOBmpk".to_string();
             let target = msg.target.to_string();
-            tx.send(BotCommand::Privmsg((target, response)))
-                .await
-                .unwrap();
+            tx.send(Bot::Privmsg(target, response)).await.unwrap();
         }
     }
 
@@ -117,28 +115,26 @@ async fn privmsg(msg: Msg, tx: mpsc::Sender<BotCommand>) {
         message: format!("saying: {}", &msg.content),
         time: Utc::now().to_rfc3339(),
     };
-    tx.send(BotCommand::Seen(entry)).await.unwrap();
+    tx.send(Bot::UpdateSeen(entry)).await.unwrap();
 
-    tx.send(BotCommand::Message(msg)).await.unwrap();
+    tx.send(Bot::Message(msg)).await.unwrap();
 }
 
-async fn kick(msg: Msg, tx: mpsc::Sender<BotCommand>) {
+async fn kick(msg: Msg, tx: mpsc::Sender<Bot>) {
     let entry = Seen {
         username: msg.source.to_string(),
         message: format!("being kicked from {}", &msg.target),
         time: Utc::now().to_rfc3339(),
     };
-    tx.send(BotCommand::Seen(entry)).await.unwrap();
+    tx.send(Bot::UpdateSeen(entry)).await.unwrap();
 }
 
 async fn invite(_msg: Msg) {}
 
-async fn quit(msg: Msg, quit_message: &Option<String>, tx: mpsc::Sender<BotCommand>) {
+async fn quit(msg: Msg, quit_message: &Option<String>, tx: mpsc::Sender<Bot>) {
     let quit_message = match quit_message {
         Some(m) => m.to_string(),
         None => "".to_string(),
     };
-    tx.send(BotCommand::Quit(msg.source, quit_message))
-        .await
-        .unwrap();
+    tx.send(Bot::Quit(msg.source, quit_message)).await.unwrap();
 }

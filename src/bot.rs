@@ -1,5 +1,5 @@
 use crate::sqlite::{Database, Location};
-use crate::{BotCommand, Notification};
+use crate::{Bot, Notification};
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use chrono_humanize::{Accuracy, HumanTime, Tense};
 use failure::Error;
@@ -14,7 +14,7 @@ use tokio::task::spawn_blocking;
 use urlencoding::encode;
 use webpage::{Webpage, WebpageOptions};
 
-enum Command<'a> {
+enum Task<'a> {
     Ignore,
     Message(&'a str),
     Seen(&'a str),
@@ -24,7 +24,7 @@ enum Command<'a> {
     Coins(&'a str, &'a str),
 }
 
-fn process_commands<'a>(nick: &'a str, msg: &'a str) -> Command<'a> {
+fn process_commands<'a>(nick: &'a str, msg: &'a str) -> Task<'a> {
     let mut tokens = msg.split_whitespace();
     let next = tokens.next();
 
@@ -53,7 +53,7 @@ fn process_commands<'a>(nick: &'a str, msg: &'a str) -> Command<'a> {
     // if there's no '`boot:` help' or '`.`help' there's nothing
     // left to do, so continue with our day
     if !bot_prefix.is_some() {
-        return Command::Ignore;
+        return Task::Ignore;
     }
 
     // TODO: add more coins https://docs.bitfinex.com/reference#rest-public-tickers
@@ -78,28 +78,28 @@ fn process_commands<'a>(nick: &'a str, msg: &'a str) -> Command<'a> {
                 "Commands: repo | seen <nick> | tell <nick> <message> | weather <location> \
                         | loc <location> | <coins|btc|eth|etc|doge|xmr|ltc> \
                         <15m(default)|week|fortnight|month>";
-            Command::Message(response)
+            Task::Message(response)
         }
-        "repo" | "git" => Command::Message("https://github.com/niall-/boot"),
+        "repo" | "git" => Task::Message("https://github.com/niall-/boot"),
         "seen" => match tokens.next() {
-            Some(nick) if (nick.len() > 0) => Command::Seen(nick),
-            Some(_) => Command::Message("Hint: seen <nick>"),
-            None => Command::Message("Hint: seen <nick>"),
+            Some(nick) if (nick.len() > 0) => Task::Seen(nick),
+            Some(_) => Task::Message("Hint: seen <nick>"),
+            None => Task::Message("Hint: seen <nick>"),
         },
         "tell" => match tokens.next() {
             Some(nick) => match tokens.as_str().trim() {
-                message if (message.len() > 0) => Command::Tell(nick, message),
-                _ => Command::Message("Hint: tell <nick> <message>"),
+                message if (message.len() > 0) => Task::Tell(nick, message),
+                _ => Task::Message("Hint: tell <nick> <message>"),
             },
-            None => Command::Message("Hint: tell <nick> <message>"),
+            None => Task::Message("Hint: tell <nick> <message>"),
         },
         "weather" => match tokens.as_str().trim() {
-            loc if (loc.len() > 0) => Command::Weather(Some(loc)),
-            _ => Command::Weather(None),
+            loc if (loc.len() > 0) => Task::Weather(Some(loc)),
+            _ => Task::Weather(None),
         },
         "loc" | "location" => match tokens.as_str().trim() {
-            loc if (loc.len() > 0) => Command::Location(loc),
-            _ => Command::Message("Hint: loc|location <location>"),
+            loc if (loc.len() > 0) => Task::Location(loc),
+            _ => Task::Message("Hint: loc|location <location>"),
         },
         c if coins.iter().any(|e| e == &c) => {
             let coin_times = [
@@ -128,9 +128,9 @@ fn process_commands<'a>(nick: &'a str, msg: &'a str) -> Command<'a> {
                 Some(_) => "15m",
                 None => "15m",
             };
-            Command::Coins(c, coin_time)
+            Task::Coins(c, coin_time)
         }
-        _ => Command::Ignore,
+        _ => Task::Ignore,
     }
 }
 
@@ -139,7 +139,7 @@ pub async fn process_messages(
     db: &Database,
     client: &crate::Client,
     api_key: Option<String>,
-    tx2: &mpsc::Sender<BotCommand>,
+    tx2: &mpsc::Sender<Bot>,
 ) {
     // HACK: check_notification only returns at most 2 notifications
     // if user alice spams user bob with notifications, when bob speaks he will be spammed with all
@@ -168,12 +168,12 @@ pub async fn process_messages(
     let command = process_commands(&nick, &msg.content);
 
     match command {
-        Command::Message(m) => client.send_privmsg(msg.target, m).unwrap(),
-        Command::Seen(n) => {
+        Task::Message(m) => client.send_privmsg(msg.target, m).unwrap(),
+        Task::Seen(n) => {
             let response = check_seen(n, &db);
             client.send_privmsg(msg.target, response).unwrap()
         }
-        Command::Tell(n, m) => {
+        Task::Tell(n, m) => {
             let entry = Notification {
                 id: 0,
                 recipient: n.to_string(),
@@ -190,7 +190,7 @@ pub async fn process_messages(
         // TODO: figure out the borrowowing issue(s?) so code doesn't have to be
         // duplicated as much here, and especially so that it can be
         // separated out into its own functions
-        Command::Weather(l) => {
+        Task::Weather(l) => {
             if api_key == None {
                 return ();
             }
@@ -218,7 +218,7 @@ pub async fn process_messages(
                     match loc {
                         Ok(Some(l)) => {
                             coords = Some(format!("{},{}", &l.lat, &l.lon));
-                            tx2.send(BotCommand::UpdateWeather(msg.source.clone(), l.lat, l.lon))
+                            tx2.send(Bot::UpdateWeather(msg.source.clone(), l.lat, l.lon))
                                 .await
                                 .unwrap();
                         }
@@ -239,9 +239,7 @@ pub async fn process_messages(
                         match weather {
                             Ok(weather) => {
                                 let pretty = print_weather(weather);
-                                tx2.send(BotCommand::Privmsg((ftarget, pretty)))
-                                    .await
-                                    .unwrap();
+                                tx2.send(Bot::Privmsg(ftarget, pretty)).await.unwrap();
                             }
                             Err(err) => {
                                 println!("weather isn't initialised: {}", err);
@@ -269,20 +267,16 @@ pub async fn process_messages(
 
                                 coords = Some(format!("{},{}", &lat, &lon));
 
-                                tx2.send(BotCommand::UpdateWeather(fsource, lat, lon))
+                                tx2.send(Bot::UpdateWeather(fsource, lat, lon))
                                     .await
                                     .unwrap();
-                                tx2.send(BotCommand::UpdateLocation(location, l))
-                                    .await
-                                    .unwrap();
+                                tx2.send(Bot::UpdateLocation(location, l)).await.unwrap();
                             }
 
                             Ok(None) => {
                                 let response = format!("Unable to fetch location for {}", location);
                                 println!("{}", &response);
-                                tx2.send(BotCommand::Privmsg((ftarget, response)))
-                                    .await
-                                    .unwrap();
+                                tx2.send(Bot::Privmsg(ftarget, response)).await.unwrap();
                                 return ();
                             }
                             Err(err) => {
@@ -296,9 +290,7 @@ pub async fn process_messages(
                             //match weather {
                             Ok(weather) => {
                                 let pretty = print_weather(weather);
-                                tx2.send(BotCommand::Privmsg((ftarget, pretty)))
-                                    .await
-                                    .unwrap();
+                                tx2.send(Bot::Privmsg(ftarget, pretty)).await.unwrap();
                             }
                             Err(err) => {
                                 println!("weather isn't initialised: {}", err);
@@ -308,7 +300,7 @@ pub async fn process_messages(
                 }
             }
         }
-        Command::Location(l) => match db.check_location(l) {
+        Task::Location(l) => match db.check_location(l) {
             Ok(Some(l)) => {
                 let response = format!(
                     "https://www.openstreetmap.org/?mlat={}&mlon={}",
@@ -325,17 +317,19 @@ pub async fn process_messages(
                 tokio::spawn(async move {
                     let fetched_location = get_location(&flocation).await;
                     match fetched_location {
-                        Ok(Some(l)) => tx2
-                            .send(BotCommand::Location(flocation, ftarget, l))
-                            .await
-                            .unwrap(),
+                        Ok(Some(l)) => {
+                            let response = format!(
+                                "https://www.openstreetmap.org/?mlat={}&mlon={}",
+                                l.lat, l.lon
+                            );
+                            tx2.send(Bot::UpdateLocation(flocation, l)).await.unwrap();
+                            tx2.send(Bot::Privmsg(ftarget, response)).await.unwrap()
+                        }
                         Ok(None) => {
                             let response =
                                 format!("Unable to fetch location data for {}", flocation);
                             println!("{}", &response);
-                            tx2.send(BotCommand::Privmsg((ftarget, response)))
-                                .await
-                                .unwrap();
+                            tx2.send(Bot::Privmsg(ftarget, response)).await.unwrap();
                         }
                         Err(err) => {
                             println!("Error fetching location data for {}", err)
@@ -345,7 +339,7 @@ pub async fn process_messages(
             }
             Err(err) => println!("Error fetching location from database: {}", err),
         },
-        Command::Coins(c, t) => {
+        Task::Coins(c, t) => {
             let coin = match c.as_ref() {
                 "btc" | "bitcoin" => "tBTCUSD",
                 "eth" | "ethereum" => "tETHUSD",
@@ -396,11 +390,9 @@ pub async fn process_messages(
                             let coin2 = coins.clone();
                             let coin3 = coins.clone();
                             let ftarget2 = ftarget.clone();
-                            tx2.send(BotCommand::UpdateCoins(coin)).await.unwrap();
-                            tx2.send(BotCommand::Privmsg((ftarget, coin2.data_0)))
-                                .await
-                                .unwrap();
-                            tx2.send(BotCommand::Privmsg((ftarget2, coin3.data_1)))
+                            tx2.send(Bot::UpdateCoins(coin)).await.unwrap();
+                            tx2.send(Bot::Privmsg(ftarget, coin2.data_0)).await.unwrap();
+                            tx2.send(Bot::Privmsg(ftarget2, coin3.data_1))
                                 .await
                                 .unwrap();
                         }
@@ -411,7 +403,7 @@ pub async fn process_messages(
                 });
             }
         }
-        Command::Ignore => (),
+        Task::Ignore => (),
         //_ => (),
     }
 }
