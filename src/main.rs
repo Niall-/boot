@@ -2,13 +2,13 @@
 use futures::prelude::*;
 use irc::client::prelude::*;
 mod bot;
+mod http;
 mod messages;
 mod settings;
 mod sqlite;
-mod http;
 //use crate::bot::{check_notification, check_seen, Coin};
-use crate::http::{Req, ReqBuilder};
 use crate::bot::Coin;
+use crate::http::{Req, ReqBuilder};
 use crate::messages::Msg;
 use crate::settings::Settings;
 use crate::sqlite::{Database, Location, Notification, Seen};
@@ -65,7 +65,8 @@ async fn main() -> Result<(), failure::Error> {
     while let Some(cmd) = rx.recv().await {
         match cmd {
             Bot::Message(msg) => {
-                bot::process_messages(msg, &db, &client, api_key.clone(), &tx2, req_client.clone()).await;
+                bot::process_messages(msg, &db, &client, api_key.clone(), &tx2, req_client.clone())
+                    .await;
             }
             Bot::Links(u) => {
                 let tx2 = tx2.clone();
