@@ -118,7 +118,7 @@ fn process_commands<'a>(nick: &'a str, msg: &'a str) -> Task<'a> {
                 "month",
             ];
             let coin_time = match tokens.next() {
-                Some(n) if coin_times.iter().any(|e| e == &n.to_lowercase()) => {
+                Some(n) if coin_times.iter().any(|e| { let _ = &n; e == &n.to_lowercase() }) => {
                     match n.to_lowercase().as_ref() {
                         "15m" | "15 minutes" | "quarter of an hour" => "15m",
                         "w" | "1w" | "week" | "weekly" => "7D",
