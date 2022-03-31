@@ -5,7 +5,9 @@ mod bot;
 mod messages;
 mod settings;
 mod sqlite;
+mod http;
 //use crate::bot::{check_notification, check_seen, Coin};
+use crate::http::{Req, ReqBuilder};
 use crate::bot::Coin;
 use crate::messages::Msg;
 use crate::settings::Settings;
@@ -52,6 +54,8 @@ async fn main() -> Result<(), failure::Error> {
     let stream = client.stream()?;
     client.identify()?;
 
+    let req_client = ReqBuilder::new().build()?;
+
     let (tx, mut rx) = mpsc::channel::<Bot>(32);
     let tx2 = tx.clone();
 
@@ -61,12 +65,13 @@ async fn main() -> Result<(), failure::Error> {
     while let Some(cmd) = rx.recv().await {
         match cmd {
             Bot::Message(msg) => {
-                bot::process_messages(msg, &db, &client, api_key.clone(), &tx2).await;
+                bot::process_messages(msg, &db, &client, api_key.clone(), &tx2, req_client.clone()).await;
             }
             Bot::Links(u) => {
                 let tx2 = tx2.clone();
+                let req_client = req_client.clone();
                 tokio::spawn(async move {
-                    let titles = bot::process_titles(u).await;
+                    let titles = bot::process_titles(u, req_client).await;
                     for t in titles {
                         tx2.send(Bot::Privmsg(t.0, t.1)).await.unwrap();
                     }

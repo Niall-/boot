@@ -1,5 +1,5 @@
 use crate::sqlite::{Database, Location};
-use crate::{Bot, Notification};
+use crate::{Bot, Notification, Req};
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use chrono_humanize::{Accuracy, HumanTime, Tense};
 use failure::Error;
@@ -9,10 +9,10 @@ use openweathermap::CurrentWeather;
 use serde::Deserialize;
 use std::f32::MAX as f32_max;
 use std::time::Duration as STDDuration;
+use tokio::spawn;
 use tokio::sync::mpsc;
-use tokio::task::spawn_blocking;
 use urlencoding::encode;
-use webpage::{Webpage, WebpageOptions};
+use webpage::{Webpage, WebpageOptions, HTML};
 
 enum Task<'a> {
     Ignore,
@@ -140,6 +140,7 @@ pub async fn process_messages(
     client: &crate::Client,
     api_key: Option<String>,
     tx2: &mpsc::Sender<Bot>,
+    _req: Req,
 ) {
     // HACK: check_notification only returns at most 2 notifications
     // if user alice spams user bob with notifications, when bob speaks he will be spammed with all
@@ -412,12 +413,13 @@ pub async fn process_messages(
     }
 }
 
-pub async fn process_titles(links: Vec<(String, String)>) -> Vec<(String, String)> {
+pub async fn process_titles(links: Vec<(String, String)>, req: Req) -> Vec<(String, String)> {
     // the following is adapted from
     // https://stackoverflow.com/questions/63434977/how-can-i-spawn-asynchronous-methods-in-a-loop
     try_join_all(links.into_iter().map(|(t, l)| {
-        spawn_blocking(|| {
-            if let (target, Some(title)) = fetch_title(t, l) {
+        let req = req.clone();
+        spawn(async move {
+            if let Ok((target, Some(title))) = fetch_title(t, l, req).await {
                 let response = format!("↪ {}", title.replace("\n", " "));
                 Some((target, response))
             } else {
@@ -432,36 +434,31 @@ pub async fn process_titles(links: Vec<(String, String)>) -> Vec<(String, String
     .collect()
 }
 
-fn fetch_title(target: String, url: String) -> (String, Option<String>) {
-    //let response = reqwest::get(title).await.ok()?.text().await.ok()?;
-    //let page = webpage::HTML::from_string(response, None);
-    let opt = WebpageOptions {
-        allow_insecure: true,
-        follow_location: true,
-        max_redirections: 10,
-        timeout: STDDuration::from_secs(10),
-        // a legitimate user agent is necessary for some sites (twitter)
-        useragent: format!("Mozilla/5.0 boot-bot-rs/1.3.0"),
-    };
+async fn fetch_title(
+    target: String,
+    url: String,
+    req: Req,
+) -> Result<(String, Option<String>), Error> {
+    let content = req.read(&url, 8192).await?;
 
-    let page = Webpage::from_url(&url, opt);
+    let page = HTML::from_string(content, Some(url));
     let mut title: Option<String> = None;
     let mut og_title: Option<String> = None;
     match page {
         Ok(mut page) => {
-            title = page.html.title;
-            og_title = page.html.meta.remove("og:title");
+            title = page.title;
+            og_title = page.meta.remove("og:title");
         }
         Err(_) => (),
     }
 
-    match title {
+    Ok(match title {
         // youtube is inconsistent, the best option here would be to use the api, an invidious api,
         // or possibly sed youtube.com with an invidious instance
         Some(t) if t == "YouTube" => (target, og_title),
         Some(t) if t == "Pleroma" => (target, og_title),
         _ => (target, title),
-    }
+    })
 }
 
 pub fn check_seen(nick: &str, db: &Database) -> String {
