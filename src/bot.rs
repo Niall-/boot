@@ -4,15 +4,17 @@ use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use chrono_humanize::{Accuracy, HumanTime, Tense};
 use failure::Error;
 use futures::future::try_join_all;
+use kuchiki::traits::*;
 use openweathermap::blocking::weather;
 use openweathermap::CurrentWeather;
 use serde::Deserialize;
+use std::cell::RefCell;
 use std::f32::MAX as f32_max;
 use std::time::Duration as STDDuration;
 use tokio::spawn;
 use tokio::sync::mpsc;
 use urlencoding::encode;
-use webpage::{Webpage, WebpageOptions, HTML};
+use webpage::{Webpage, WebpageOptions};
 
 enum Task<'a> {
     Ignore,
@@ -441,22 +443,31 @@ async fn fetch_title(
 ) -> Result<(String, Option<String>), Error> {
     let content = req.read(&url, 8192).await?;
 
-    let page = HTML::from_string(content, Some(url));
-    let mut title: Option<String> = None;
-    let mut og_title: Option<String> = None;
-    match page {
-        Ok(mut page) => {
-            title = page.title;
-            og_title = page.meta.remove("og:title");
-        }
-        Err(_) => (),
-    }
+    let page = kuchiki::parse_html().one(content);
+
+    let title = page
+        .select_first("title")
+        .ok()
+        .and_then(|t| t.as_node().first_child())
+        .and_then(|t| t.as_text().map(RefCell::take));
+
+    let og_title = page
+        .select_first(r#"meta[property="og:title"]"#)
+        .ok()
+        .and_then(|t| {
+            t.as_node().as_element().and_then(|t| {
+                t.attributes
+                    .borrow()
+                    .get("content")
+                    .and_then(|t| Some(t.to_string()))
+            })
+        });
 
     Ok(match title {
         // youtube is inconsistent, the best option here would be to use the api, an invidious api,
         // or possibly sed youtube.com with an invidious instance
-        Some(t) if t == "YouTube" => (target, og_title),
-        Some(t) if t == "Pleroma" => (target, og_title),
+        Some(t) if t == "YouTube" && og_title.is_some() => (target, og_title),
+        Some(t) if t == "Pleroma" && og_title.is_some() => (target, og_title),
         _ => (target, title),
     })
 }
