@@ -422,7 +422,7 @@ pub async fn process_titles(links: Vec<(String, String)>, req: Req) -> Vec<(Stri
         let req = req.clone();
         spawn(async move {
             if let Ok((target, Some(title))) = fetch_title(t, l, req).await {
-                let response = format!("↪ {}", title.replace("\n", " "));
+                let response = format!("⤷ {}", title.replace("\n", " "));
                 Some((target, response))
             } else {
                 None
