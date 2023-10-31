@@ -589,15 +589,15 @@ pub fn print_weather(weather: CurrentWeather) -> String {
         Err(_) => "Failed to parse time".to_string(),
     };
 
-    let celsius = weather.main.temp.round();
-    let fahrenheit = ((weather.main.temp * (9.0 / 5.0)) + 32_f64).round();
+    let celsius = weather.main.temp.round_human();
+    let fahrenheit = ((weather.main.temp * (9.0 / 5.0)) + 32_f64).round_human();
 
-    let metric_wind = weather.wind.speed.round();
-    let imperial_wind = (weather.wind.speed * 2.2369_f64).round();
+    let metric_wind = weather.wind.speed.round_human();
+    let imperial_wind = (weather.wind.speed * 2.2369_f64).round_human();
     let wind = match weather.wind.gust {
         Some(g) => {
-            let metric_gust = g.round();
-            let imperial_gust = (g * 2.2369_f64).round();
+            let metric_gust = g.round_human();
+            let imperial_gust = (g * 2.2369_f64).round_human();
             format!(
                 "Wind: {} mph [{} m/s], Gust: {} mph [{} m/s]",
                 metric_wind, imperial_wind, imperial_gust, metric_gust
@@ -803,3 +803,18 @@ fn graph(initial: f32, prices: Vec<f32>) -> String {
 
     v
 }
+
+trait HumanReadableRound {
+    fn round_human(self) -> f64;
+}
+
+impl HumanReadableRound for f64 {
+    fn round_human(self) -> f64 {
+        if self > -0.5 {
+            0.00
+        } else {
+            self.round()
+        }
+    }
+}
+
