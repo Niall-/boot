@@ -609,7 +609,7 @@ pub fn print_weather(weather: CurrentWeather) -> String {
             let imperial_gust = (g * 2.2369_f64).round();
             format!(
                 "Wind: {} mph [{} m/s], Gust: {} mph [{} m/s]",
-                metric_wind, imperial_wind, imperial_gust, metric_gust
+                imperial_wind, metric_wind, imperial_gust, metric_gust
             )
         }
         None => {
