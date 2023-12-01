@@ -2,7 +2,7 @@ use crate::sqlite::{Database, Location};
 use crate::{Bot, Notification, Req};
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use chrono_humanize::{Accuracy, HumanTime, Tense};
-use failure::Error;
+use failure::{bail, Error};
 use futures::future::try_join_all;
 use kuchiki::traits::*;
 use openweathermap::blocking::weather;
@@ -24,6 +24,7 @@ enum Task<'a> {
     Weather(Option<&'a str>),
     Location(&'a str),
     Coins(&'a str, &'a str),
+    Lastfm(&'a str),
 }
 
 fn process_commands<'a>(nick: &'a str, msg: &'a str) -> Task<'a> {
@@ -132,6 +133,10 @@ fn process_commands<'a>(nick: &'a str, msg: &'a str) -> Task<'a> {
             };
             Task::Coins(c, coin_time)
         }
+        "lastfm" => match tokens.next() {
+            Some(nick) => Task::Lastfm(nick.trim()),
+            None => Task::Message("noob"),
+        },
         _ => Task::Ignore,
     }
 }
@@ -410,6 +415,10 @@ pub async fn process_messages(
                 });
             }
         }
+        Task::Lastfm(n) => match get_lastfm_scrobble(n.to_string(), _req).await {
+            Ok(response) => client.send_privmsg(msg.target, response).unwrap(),
+            Err(e) => client.send_privmsg(msg.target, e).unwrap(),
+        },
         Task::Ignore => (),
         //_ => (),
     }
@@ -802,4 +811,53 @@ fn graph(initial: f32, prices: Vec<f32>) -> String {
     }
 
     v
+}
+
+async fn get_lastfm_scrobble(user: String, req: Req) -> Result<String, Error> {
+    let url = format!("https://www.last.fm/user/{}", encode(&user));
+    let content = req.read(&url, 8192).await?;
+
+    async fn take_last_played(user: String, html: String) -> Option<String> {
+        let page = kuchiki::parse_html().one(html);
+        let recent_tracks = page
+            .select_first(r#"section[id="recent-tracks-section"]"#)
+            .ok()?;
+        let chartlist = recent_tracks
+            .as_node()
+            .select_first(r#"tr[class*="chartlist-row"]"#)
+            .ok()?;
+        let title = chartlist
+            .as_node()
+            .select_first(r#"td[class="chartlist-name"]"#)
+            .ok()?;
+        let artist = chartlist
+            .as_node()
+            .select_first(r#"td[class="chartlist-artist"]"#)
+            .ok()?;
+        let played = chartlist
+            .as_node()
+            .select_first(r#"td[class*="chartlist-timestamp"]"#)
+            .ok()?;
+        let last_played = match played.text_contents().trim() {
+            "Scrobbling now" => format!(
+                "{} is now playing {} by {}",
+                user,
+                title.text_contents().trim(),
+                artist.text_contents().trim()
+            ),
+            _ => format!(
+                "{} last played {} by {} {}",
+                user,
+                title.text_contents().trim(),
+                artist.text_contents().trim(),
+                played.text_contents().trim()
+            ),
+        };
+        Some(last_played)
+    }
+
+    match take_last_played(user, content).await {
+        Some(r) => Ok(r),
+        None => bail!("No song data found!"),
+    }
 }
