@@ -2,14 +2,16 @@ use crate::sqlite::{Database, Location};
 use crate::{Bot, Notification, Req};
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use chrono_humanize::{Accuracy, HumanTime, Tense};
-use failure::{bail, Error};
+use failure::{bail, err_msg, Error};
 use futures::future::try_join_all;
 use kuchiki::traits::*;
 use openweathermap::blocking::weather;
 use openweathermap::CurrentWeather;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::f32::MAX as f32_max;
+use std::str::FromStr;
 use std::time::Duration as STDDuration;
 use tokio::spawn;
 use tokio::sync::mpsc;
@@ -33,103 +35,105 @@ fn process_commands<'a>(nick: &'a str, msg: &'a str) -> Task<'a> {
 
     let mut bot_prefix: Option<&str> = None;
 
-    match next {
+    if let Some(n) = next {
         // interactions with the bot i.e., '.help'
-        Some(n) => {
-            bot_prefix = match n {
-                c if c.starts_with("./") => c.strip_prefix("./"),
-                // some people like to say just '.' or '!' in irc so
-                // we'll check the length to maker sure they're
-                // actually trying to interact with the bot
-                c if (c.starts_with(".") && c.len() > 1) => c.strip_prefix("."),
-                c if (c.starts_with("!") && c.len() > 1) => c.strip_prefix("!"),
-                c if c.to_lowercase().starts_with(&nick) => match tokens.next() {
-                    Some(n) => Some(n),
-                    None => Some("help"),
-                },
-                _ => None,
-            }
+        bot_prefix = match n {
+            c if c.starts_with("./") => c.strip_prefix("./"),
+            // some people like to say just '.' or '!' in irc so
+            // we'll check the length to maker sure they're
+            // actually trying to interact with the bot
+            c if (c.starts_with('.') && c.len() > 1) => c.strip_prefix('.'),
+            c if (c.starts_with('!') && c.len() > 1) => c.strip_prefix('!'),
+            c if c.to_lowercase().starts_with(nick) => match tokens.next() {
+                Some(n) => Some(n),
+                None => Some("help"),
+            },
+            _ => None,
         }
-        _ => (),
     }
 
     // if there's no '`boot:` help' or '`.`help' there's nothing
     // left to do, so continue with our day
-    if !bot_prefix.is_some() {
+    if bot_prefix.is_none() {
         return Task::Ignore;
     }
 
-    // TODO: add more coins https://docs.bitfinex.com/reference#rest-public-tickers
-    // https://api-pub.bitfinex.com/v2/conf/pub:list:pair:exchange
     let coins = [
         "btc",
         "bitcoin",
+        "btcgbp", // bitcoin
         "eth",
-        "ethereum",
-        "coin",
+        "ethereum", // ethereum
+        "ltc",      // litecoin
+        "xmr",
+        "monero", // monero
+        "doge",   // dogecoin
         "coins",
         "shitcoins",
-        "etc",
-        "doge",
-        "xmr",
-        "ltc",
     ];
 
     match bot_prefix.unwrap() {
         "help" | "man" | "manual" => {
             let response =
                 "Commands: repo | seen <nick> | tell <nick> <message> | weather <location> \
-                        | loc <location> | <coins|btc|eth|etc|doge|xmr|ltc> \
-                        <15m(default)|week|fortnight|month>";
+                        | loc <location> | <btc(gbp)|eth|ltc|xmr|doge> \
+                        <day|week|fortnight|month|year>";
             Task::Message(response)
         }
         "repo" | "git" => Task::Message("https://github.com/niall-/boot"),
         "seen" => match tokens.next() {
-            Some(nick) if (nick.len() > 0) => Task::Seen(nick),
+            Some(nick) if !nick.is_empty() => Task::Seen(nick),
             Some(_) => Task::Message("Hint: seen <nick>"),
             None => Task::Message("Hint: seen <nick>"),
         },
         "tell" => match tokens.next() {
-            Some(nick) => match tokens.as_str().trim() {
-                message if (message.len() > 0) => Task::Tell(nick, message),
+            Some(nick) => match tokens.remainder() {
+                Some(message) if !message.trim().is_empty() => Task::Tell(nick, message.trim()),
                 _ => Task::Message("Hint: tell <nick> <message>"),
             },
             None => Task::Message("Hint: tell <nick> <message>"),
         },
-        "weather" => match tokens.as_str().trim() {
-            loc if (loc.len() > 0) => Task::Weather(Some(loc)),
+        "weather" => match tokens.remainder() {
+            Some(loc) if !loc.trim().is_empty() => Task::Weather(Some(loc.trim())),
             _ => Task::Weather(None),
         },
-        "loc" | "location" => match tokens.as_str().trim() {
-            loc if (loc.len() > 0) => Task::Location(loc),
+        "loc" | "location" => match tokens.remainder() {
+            Some(loc) if !loc.trim().is_empty() => Task::Location(loc.trim()),
             _ => Task::Message("Hint: loc|location <location>"),
         },
+        // TODO: support .spot for current spot price
         c if coins.iter().any(|e| e == &c) => {
             let coin_times = [
-                "15m",
+                "1d",
+                "day",
+                "24h",
+                "7d",
                 "w",
                 "1w",
                 "week",
                 "weekly",
+                "14d",
                 "2w",
                 "fortnight",
                 "fortnightly",
-                "4w",
+                "31d",
                 "30d",
                 "month",
+                "year",
+                "spot",
             ];
             let coin_time = match tokens.next() {
-                Some(n) if coin_times.iter().any(|e| e.eq_ignore_ascii_case(&n)) => {
+                Some(n) if coin_times.iter().any(|e| e.eq_ignore_ascii_case(n)) => {
                     match n.to_lowercase().as_ref() {
-                        "15m" | "15 minutes" | "quarter of an hour" => "15m",
-                        "w" | "1w" | "week" | "weekly" => "7D",
-                        "2w" | "fortnight" | "fortnightly" => "14D",
-                        "4w" | "30d" | "month" => "30D",
-                        _ => "14D",
+                        "7d" | "w" | "1w" | "week" | "weekly" => "7d",
+                        "14d" | "2w" | "fortnight" | "fortnightly" => "14d",
+                        "31d" | "30d" | "month" => "31d",
+                        "year" => "1y",
+                        _ => "1d",
                     }
                 }
-                Some(_) => "15m",
-                None => "15m",
+                Some(_) => "1d",
+                None => "1d",
             };
             Task::Coins(c, coin_time)
         }
@@ -156,7 +160,7 @@ pub async fn process_messages(
     // for whether the channel is going to be spammed
     // some ways to fix this: some persistence allowing for a user to receive any potential
     // messages over pm, limit number of messages a user can receive, etc
-    let notifications = check_notification(&msg.source, &db);
+    let notifications = check_notification(&msg.source, db);
     for n in notifications {
         client.send_privmsg(&msg.target, &n).unwrap();
     }
@@ -166,13 +170,13 @@ pub async fn process_messages(
     // easter eggs
     // TODO: add support for parsing from file
     match &msg.content {
-        n if n.trim().starts_with("nn") => {
+        n if n.trim().starts_with("nn ") => {
             let response = match &msg.content {
                 c if c.to_lowercase().contains(&nick) => format!("nn {}", &msg.source),
                 _ => "nn".to_string(),
             };
             client.send_privmsg(&msg.target, response).unwrap();
-            return ();
+            return;
         }
         _ => (),
     }
@@ -182,7 +186,7 @@ pub async fn process_messages(
     match command {
         Task::Message(m) => client.send_privmsg(msg.target, m).unwrap(),
         Task::Seen(n) => {
-            let response = check_seen(n, &db);
+            let response = check_seen(n, db);
             client.send_privmsg(msg.target, response).unwrap()
         }
         Task::Tell(n, m) => {
@@ -194,7 +198,7 @@ pub async fn process_messages(
             };
             if let Err(err) = db.add_notification(&entry) {
                 println!("SQL error adding notification: {}", err);
-                return ();
+                return;
             }
             let response = format!("Ok, I'll tell {} that", n);
             client.send_privmsg(msg.target, response).unwrap();
@@ -203,8 +207,8 @@ pub async fn process_messages(
         // duplicated as much here, and especially so that it can be
         // separated out into its own functions
         Task::Weather(l) => {
-            if api_key == None {
-                return ();
+            if api_key.is_none() {
+                return;
             }
             let key = api_key.as_ref().unwrap().clone();
 
@@ -216,9 +220,9 @@ pub async fn process_messages(
                 None => match db.check_weather(&msg.source) {
                     Ok(Some((lat, lon))) => coords = Some(format!("{},{}", lat, lon)),
                     Ok(None) => {
-                        let response = format!("Hint: weather <location>");
+                        let response = "Hint: weather <location>".to_string();
                         client.send_privmsg(&msg.target, response).unwrap();
-                        return ();
+                        return;
                     }
                     Err(err) => println!("Error checking weather: {}", err),
                 },
@@ -226,7 +230,7 @@ pub async fn process_messages(
                 // update user's weather preference and fetch coordinates
                 Some(l) => {
                     location = l.to_string();
-                    let loc = db.check_location(&l);
+                    let loc = db.check_location(l);
                     match loc {
                         Ok(Some(l)) => {
                             coords = Some(format!("{},{}", &l.lat, &l.lon));
@@ -289,11 +293,11 @@ pub async fn process_messages(
                                 let response = format!("Unable to fetch location for {}", location);
                                 println!("{}", &response);
                                 tx2.send(Bot::Privmsg(ftarget, response)).await.unwrap();
-                                return ();
+                                return;
                             }
                             Err(err) => {
                                 println!("Error fetching location data: {}", err);
-                                return ();
+                                return;
                             }
                         }
 
@@ -352,19 +356,19 @@ pub async fn process_messages(
             Err(err) => println!("Error fetching location from database: {}", err),
         },
         Task::Coins(c, t) => {
-            let coin = match c.as_ref() {
-                "btc" | "bitcoin" => "tBTCUSD",
-                "eth" | "ethereum" => "tETHUSD",
-                "etc" => "tETCUSD",
-                "doge" => "tDOGE:USD",
-                "xmr" => "tXMRUSD",
-                "ltc" => "tLTCUSD",
-                _ => "tBTCUSD",
+            let coin = match c {
+                "btc" | "bitcoin" => "XXBTZUSD",
+                "btcgbp" => "XXBTZGBP",
+                "eth" | "ethereum" => "XETHZUSD",
+                "ltc" => "XLTCZUSD",
+                "xmr" | "monero" => "XXMRZUSD",
+                "doge" => "XDGUSD",
+                _ => "XXBTZUSD",
             };
 
-            // if coins are <15m, check the database for a cached entry
-            let dbcoin = match t {
-                "15m" => db.check_coins(&coin),
+            // todo: we should store the json so that we only need to fetch an updated spot price
+            /*let dbcoin = match t {
+                "donotcheck" => db.check_coins(&coin),
                 _ => Ok(None),
             };
 
@@ -388,32 +392,30 @@ pub async fn process_messages(
                     println!("error checking coins: {}", err);
                     true
                 }
-            };
+            };*/
 
-            if check {
-                let ftarget = msg.target.clone();
-                let tx2 = tx2.clone();
-                let time_frame = t.to_string();
-                tokio::spawn(async move {
-                    let coins = get_coins(&coin, &time_frame).await;
-                    match coins {
-                        Ok(coins) => {
-                            let coin = coins.clone();
-                            let coin2 = coins.clone();
-                            let coin3 = coins.clone();
-                            let ftarget2 = ftarget.clone();
-                            tx2.send(Bot::UpdateCoins(coin)).await.unwrap();
-                            tx2.send(Bot::Privmsg(ftarget, coin2.data_0)).await.unwrap();
-                            tx2.send(Bot::Privmsg(ftarget2, coin3.data_1))
-                                .await
-                                .unwrap();
-                        }
-                        Err(err) => {
-                            println!("issue getting shitcoin data: {}", err);
-                        }
+            let ftarget = msg.target.clone();
+            let tx2 = tx2.clone();
+            let time_frame = t.to_string();
+            tokio::spawn(async move {
+                let coins = get_coins(coin, &time_frame).await;
+                match coins {
+                    Ok(coins) => {
+                        let _coin = coins.clone();
+                        let coin2 = coins.clone();
+                        let coin3 = coins.clone();
+                        let ftarget2 = ftarget.clone();
+                        //tx2.send(Bot::UpdateCoins(coin)).await.unwrap();
+                        tx2.send(Bot::Privmsg(ftarget, coin2.data_0)).await.unwrap();
+                        tx2.send(Bot::Privmsg(ftarget2, coin3.data_1))
+                            .await
+                            .unwrap();
                     }
-                });
-            }
+                    Err(err) => {
+                        println!("issue getting shitcoin data: {}", err);
+                    }
+                }
+            });
         }
         Task::Lastfm(n) => match get_lastfm_scrobble(n.to_string(), _req).await {
             Ok(response) => client.send_privmsg(msg.target, response).unwrap(),
@@ -431,7 +433,7 @@ pub async fn process_titles(links: Vec<(String, String)>, req: Req) -> Vec<(Stri
         let req = req.clone();
         spawn(async move {
             if let Ok((target, Some(title))) = fetch_title(t, l, req).await {
-                let response = format!("↳ {}", title.replace("\n", " "));
+                let response = format!("↳ {}", title.replace('\n', " "));
                 Some((target, response))
             } else {
                 None
@@ -441,7 +443,7 @@ pub async fn process_titles(links: Vec<(String, String)>, req: Req) -> Vec<(Stri
     .await
     .unwrap_or_default()
     .into_iter()
-    .filter_map(|u| u)
+    .flatten()
     .collect()
 }
 
@@ -464,12 +466,9 @@ async fn fetch_title(
         .select_first(r#"meta[property="og:title"]"#)
         .ok()
         .and_then(|t| {
-            t.as_node().as_element().and_then(|t| {
-                t.attributes
-                    .borrow()
-                    .get("content")
-                    .and_then(|t| Some(t.to_string()))
-            })
+            t.as_node()
+                .as_element()
+                .and_then(|t| t.attributes.borrow().get("content").map(|t| t.to_string()))
         });
 
     Ok(match title {
@@ -502,9 +501,8 @@ pub fn check_notification(nick: &str, db: &Database) -> Vec<String> {
             for i in n {
                 let message = format!("{}, message from {}: {}", nick, i.via, i.message);
                 notification.push(message);
-                match db.remove_notification(i.id) {
-                    Err(err) => println!("SQL error checking notification: {}", err),
-                    _ => (),
+                if let Err(err) = db.remove_notification(i.id) {
+                    println!("SQL error checking notification: {}", err)
                 }
                 if notification.len() > 1 {
                     break;
@@ -525,7 +523,7 @@ pub async fn get_location(loc: &str) -> Result<Option<Location>, Error> {
         max_redirections: 10,
         timeout: STDDuration::from_secs(10),
         // a legitimate user agent is necessary for some sites (twitter)
-        useragent: format!("Mozilla/5.0 boot-bot-rs/1.3.0"),
+        useragent: "Mozilla/5.0 boot-bot-rs/1.3.0".to_string(),
     };
 
     // TODO: this throws an error when a city doesn't exist for a location (i.e., it's a county)
@@ -535,7 +533,7 @@ pub async fn get_location(loc: &str) -> Result<Option<Location>, Error> {
     // something should be done about this soon to respect nominatim's TOS
     let url = format!(
         "https://nominatim.openstreetmap.org/search?q={}&format=json&addressdetails=1&limit=1",
-        &encode(&loc)
+        &encode(loc)
     );
 
     let page = Webpage::from_url(&url, opt)?;
@@ -546,7 +544,7 @@ pub async fn get_location(loc: &str) -> Result<Option<Location>, Error> {
 }
 
 pub async fn get_weather(coords: &str, api_key: &str) -> Result<CurrentWeather, String> {
-    let w: CurrentWeather = weather(&coords, "metric", "en", api_key)?;
+    let w: CurrentWeather = weather(coords, "metric", "en", api_key)?;
 
     Ok(w)
 }
@@ -569,7 +567,7 @@ pub fn print_weather(weather: CurrentWeather) -> String {
     // https://openweathermap.org/weather-conditions
     // the 700..=781 range has some conditions like
     // mist/haze/fog but I don't think cloud coverage matters there
-    let description = format!("{}", &uppercase(&weather.weather[0].description));
+    let description = uppercase(&weather.weather[0].description).to_string();
     let description = match weather.weather[0].id {
         // thunderstorms
         200..=232 => format!("{}, {}% cv", description, weather.clouds.all),
@@ -633,18 +631,84 @@ pub fn print_weather(weather: CurrentWeather) -> String {
 pub struct Coin {
     pub coin: String,
     pub date: i64,
+    // both are sent to the channel at the same time
+    // XXBTZUSD $41733.5 (05-Tue 02:00:00 UTC) ▂▂▂▂▁▁▁▁▁▂▂▂▃▄▆▇▇▇▇██▇██ spot: $44131.9 (06-Wed 01:06:20 UTC)
     pub data_0: String,
+    // XXBTZUSD high: $44192.8 (05-Tue 22:00:00 UTC) // mean: $44444.49 // low: $41529.8 (05-Tue 07:00:00 UTC)
     pub data_1: String,
 }
 
+fn from_str<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    let s: String = Deserialize::deserialize(deserializer)?;
+    T::from_str(&s).map_err(serde::de::Error::custom)
+}
+
 #[derive(Debug, Deserialize)]
-struct Coins {
-    mts: i64,
-    _open: f32,
-    close: f32,
-    _high: f32,
-    _low: f32,
-    _volume: f32,
+struct OHLCData {
+    time: i64,
+    _open: String,
+    _high: String,
+    _low: String,
+    _close: String,
+    #[serde(deserialize_with = "from_str")]
+    vwap: f32,
+    _volume: String,
+    _count: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct OHLCResult {
+    #[serde(flatten)]
+    data: HashMap<String, Vec<OHLCData>>,
+    #[serde(rename = "last")]
+    _last: i64,
+}
+
+#[allow(clippy::upper_case_acronyms)]
+#[derive(Debug, Deserialize)]
+struct OHLC {
+    #[serde(rename = "error")]
+    _error: Vec<String>,
+    result: OHLCResult,
+}
+
+#[derive(Debug, Deserialize)]
+struct TickerData {
+    #[serde(rename = "a")]
+    _a: Vec<String>,
+    #[serde(rename = "b")]
+    _b: Vec<String>,
+    c: Vec<String>,
+    #[serde(rename = "v")]
+    _v: Vec<String>,
+    #[serde(rename = "p")]
+    _p: Vec<String>,
+    #[serde(rename = "t")]
+    _t: Vec<i64>,
+    #[serde(rename = "l")]
+    _l: Vec<String>,
+    #[serde(rename = "h")]
+    _h: Vec<String>,
+    #[serde(rename = "o")]
+    _o: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct TickerResult {
+    #[serde(flatten)]
+    data: HashMap<String, TickerData>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Ticker {
+    #[serde(rename = "error")]
+    _error: Vec<String>,
+    result: TickerResult,
 }
 
 pub async fn get_coins(coin: &str, time_frame: &str) -> Result<Coin, Error> {
@@ -655,98 +719,140 @@ pub async fn get_coins(coin: &str, time_frame: &str) -> Result<Coin, Error> {
         max_redirections: 10,
         timeout: STDDuration::from_secs(10),
         // a legitimate user agent is necessary for some sites (twitter)
-        useragent: format!("Mozilla/5.0 boot-bot-rs/1.3.0"),
+        useragent: "Mozilla/5.0 boot-bot-rs/1.3.0".to_string(),
+    };
+    // ...
+    let opt2 = WebpageOptions {
+        allow_insecure: true,
+        follow_location: true,
+        max_redirections: 10,
+        timeout: STDDuration::from_secs(10),
+        // a legitimate user agent is necessary for some sites (twitter)
+        useragent: "Mozilla/5.0 boot-bot-rs/1.3.0".to_string(),
     };
 
-    let (limit, time) = match time_frame {
-        "15m" => (96, "15m"),
-        "7D" => (29, "6h"),
-        "14D" => (29, "12h"),
-        "30D" => (31, "1D"),
-        _ => (29, "6h"),
+    let (interval, since) = match time_frame {
+        "1d" => (60, Utc::now() - Duration::hours(24)),
+        "7d" => (240, Utc::now() - Duration::days(7)),
+        "14d" => (240, Utc::now() - Duration::days(14)),
+        "31d" => (1440, Utc::now() - Duration::days(31)),
+        "1y" => (21600, Utc::now() - Duration::days(365)),
+        _ => (60, Utc::now() - Duration::hours(24)),
     };
 
-    // we should be getting the correct coin name for this
-    let url = format!(
-        "https://api-pub.bitfinex.com/v2/candles/trade:{}:{}/hist?limit={}",
-        time, coin, limit
+    // https://docs.kraken.com/rest/#tag/Market-Data/operation/getOHLCData
+    let ohlc_url = format!(
+        "https://api.kraken.com/0/public/OHLC?pair={coin}&interval={interval}&since={}",
+        since.timestamp()
     );
+    let ticker_url = format!("https://api.kraken.com/0/public/Ticker?pair={coin}");
 
-    let page = Webpage::from_url(&url, opt)?;
+    let ohlc_page = Webpage::from_url(&ohlc_url, opt)?;
+    let ticker_page = Webpage::from_url(&ticker_url, opt2)?;
+    let mut coin_json: OHLC = serde_json::from_str(&ohlc_page.html.text_content)?;
+    let mut ticker_json: Ticker = serde_json::from_str(&ticker_page.html.text_content)?;
+    let spot_time = Utc::now().timestamp();
 
-    // TODO - status codes
-    //if page.http.response_code == 429 {
-    //}
+    //let json_data = r#"{"error":[],"result":{"XXBTZUSD":[[1701730800,"41970.0","41984.7","41793.6","41984.7","41877.4","135.24641260",1812],[1701734400,"41983.0","41983.0","41750.0","41879.5","41833.9","178.09065890",1197],[1701738000,"41879.5","41904.5","41617.6","41799.9","41745.8","113.18066859",1270],[1701741600,"41800.0","41804.6","41621.0","41729.9","41733.5","51.02022883",863],[1701745200,"41730.3","41826.4","41717.9","41818.0","41793.5","51.86326154",725],[1701748800,"41822.4","41825.0","41721.6","41765.7","41773.6","30.21526676",679],[1701752400,"41765.7","41911.7","41721.1","41909.2","41889.6","91.74214454",779],[1701756000,"41909.2","41917.1","41664.5","41720.0","41822.5","98.96134530",1020],[1701759600,"41720.0","41720.0","41427.1","41515.1","41529.8","124.90751096",1330],[1701763200,"41515.1","41624.8","41447.4","41608.4","41555.8","126.96394249",877],[1701766800,"41612.3","41707.1","41608.2","41706.0","41672.2","12.36149485",655],[1701770400,"41706.1","41755.0","41633.7","41633.7","41709.0","32.74293494",709],[1701774000,"41633.7","41729.6","41568.3","41725.7","41656.5","44.50569904",749],[1701777600,"41725.7","41872.3","41691.8","41872.3","41801.8","44.29458914",770],[1701781200,"41872.3","42050.0","41820.9","41835.9","41950.9","265.79221665",2100],[1701784800,"41835.9","42230.0","41835.8","42222.0","42051.8","209.26798469",2066],[1701788400,"42222.0","42490.3","42110.0","42293.0","42278.0","337.86431557",2457],[1701792000,"42293.0","42787.0","42139.5","42735.0","42534.1","561.04636522",3996],[1701795600,"42735.0","43990.0","42691.6","43394.5","43361.0","1111.03024097",7849],[1701799200,"43386.4","44050.0","43320.0","43725.9","43735.8","364.09461761",3573],[1701802800,"43725.8","43943.5","43620.0","43804.1","43755.3","202.74502157",2999],[1701806400,"43804.0","43836.6","43437.0","43782.3","43647.0","175.58621286",2442],[1701810000,"43785.1","44216.0","43724.0","43912.9","43933.1","343.40651248",3343],[1701813600,"43913.0","44465.0","43809.0","44355.0","44192.3","423.89511718",3326]],"last":1701810000}}"#;
+    //let mut coin_json = serde_json::from_str::<OHLC>(json_data)?;
+    //let ticker_data = r#"{"error":[],"result":{"XXBTZUSD":{"a":["44100.00000","126","126.000"],"b":["44099.90000","1","1.000"],"c":["44099.90000","0.05668947"],"v":["5287.30231047","5291.47690863"],"p":["42964.97598","42964.18797"],"t":[48035,48215],"l":["41427.10000","41427.10000"],"h":["44465.00000","44465.00000"],"o":"41983.00000"}}}"#;
+    //let mut ticker_json = serde_json::from_str::<Ticker>(ticker_data)?;
 
-    let mut coins: Vec<Coins> = serde_json::from_str(&page.html.text_content)?;
-    coins.reverse();
+    let mut coins = coin_json
+        .result
+        .data
+        .remove(coin)
+        .ok_or(err_msg("Unable to parse coin data"))?;
+
+    let spot: TickerData = ticker_json
+        .result
+        .data
+        .remove(coin)
+        .ok_or(err_msg("Unable to parse spot data"))?;
+    let spot = spot.c.first().unwrap();
+    let spot: f32 = f32::from_str(spot).unwrap();
+
     let mut prices = Vec::<f32>::new();
 
-    let mut count = 0;
     let mut initial: f32 = 0.0;
-    let mut min: (f32, usize) = (0.0, 0);
-    let mut max: (f32, usize) = (0.0, 0);
+    let mut min: (f32, usize, i64) = (0.0, 0, 0); // price, count, time
+    let mut max: (f32, usize, i64) = (0.0, 0, 0); // price, count, time
     let mut mean: f32 = 0.0;
+    let mut tmp: f32 = 0.0; // tmp value used to sum
 
     // what we want is the min, max, mean, values the prices
-    // we also want the prices every hour (count % 4 == 0) for 15m values
+    // for 2 week values we average the data to avoid long graphs
     // the initial value is to colour code the initial bar which
     // will be coins[3] since we're only keeping hourly prices
-    //
-    // for weekly/fortnight values we collect an extra day for the initial value
-    for c in &coins {
+    for (count, c) in coins.iter().enumerate() {
         if count == 0 {
-            initial = c.close;
-            min = (c.close, count);
-            max = (c.close, count);
+            initial = c.vwap;
+            min = (c.vwap, count, c.time);
+            max = (c.vwap, count, c.time);
         } else {
             match time_frame {
-                "15m" => {
-                    if count % 4 == 0 {
-                        prices.push(c.close);
+                "14d" => {
+                    if count % 2 == 0 {
+                        prices.push(c.vwap + tmp);
+                        tmp = 0.0;
+                    } else {
+                        tmp += c.vwap;
                     }
                 }
-                _ => prices.push(c.close),
+                _ => prices.push(c.vwap),
             }
-            if c.close > max.0 {
-                max = (c.close, count);
-            }
-            if c.close < min.0 {
-                min = (c.close, count);
+            if c.vwap > max.0 {
+                max = (c.vwap, count, c.time);
+            } else if c.vwap < min.0 {
+                min = (c.vwap, count, c.time);
             }
         }
-        mean += c.close;
-        count += 1;
+        mean += c.vwap;
     }
 
-    let len = coins.len();
-    mean = mean / len as f32;
+    match time_frame {
+        // not technically correct but whatever
+        "14d" => prices.push(spot * 2.0),
+        _ => prices.push(spot),
+    }
+    if spot > max.0 {
+        max = (spot, max.1, spot_time)
+    } else if spot < min.0 {
+        min = (spot, min.1, spot_time)
+    }
+    mean += spot;
 
-    let graph = graph(initial, prices);
+    let len = coins.len();
+    mean /= len as f32;
+
+    let sign = match coin {
+        e if e.ends_with("GBP") => "£",
+        _ => "$",
+    };
+
+    let graph = graph(initial, prices, true);
     let graph = format!(
-        "{} begin: ${} {} {} end: ${} {}",
-        coin,
-        coins[0].close,
-        print_date(coins[0].mts, time_frame),
-        graph,
-        coins[len - 1].close,
-        print_date(coins[len - 1].mts, time_frame),
+        "{coin} {sign}{} {} {graph} spot: {sign}{} {}",
+        coins[0].vwap,
+        print_date(coins[0].time, time_frame),
+        //coins[len - 1].vwap,
+        //print_date(coins[len - 1].time, time_frame),
+        spot,
+        print_date(spot_time, time_frame)
     );
 
     let stats = format!(
-        "{} high: ${} {} // mean: ${} // low: ${} {}",
-        coin,
+        "{coin} high: {sign}{} {} // mean: {sign}{mean} // low: {sign}{} {}",
         max.0,
-        print_date(coins[max.1].mts, time_frame),
-        mean,
+        print_date(max.2, time_frame),
         min.0,
-        print_date(coins[min.1].mts, time_frame),
+        print_date(min.2, time_frame),
     );
 
     let recent = coins.pop().unwrap();
     let result = Coin {
         coin: coin.to_string(),
-        date: recent.mts,
+        date: recent.time,
         data_0: graph,
         data_1: stats,
     };
@@ -755,18 +861,31 @@ pub async fn get_coins(coin: &str, time_frame: &str) -> Result<Coin, Error> {
 }
 
 fn print_date(date: i64, time_frame: &str) -> String {
-    let date = (date / 1000).to_string();
-    let time = NaiveDateTime::parse_from_str(&date, "%s").unwrap();
+    let time = NaiveDateTime::parse_from_str(&date.to_string(), "%s").unwrap();
     match time_frame {
-        "7D" | "14D" | "30D" => time.format("(%v)").to_string(),
-        _ => time.format("(%a %d %T UTC)").to_string(),
+        // 29-Nov-2023
+        "7d" | "14d" | "31d" | "1y" => time.format("(%d-%b-%Y)").to_string(),
+        // Tue-05 02:00:00 UTC
+        _ => time.format("(%a-%d %T UTC)").to_string(),
     }
 }
 
 // the following is adapted from
 // https://github.com/jiri/rust-spark
-fn graph(initial: f32, prices: Vec<f32>) -> String {
+fn graph(initial: f32, prices: Vec<f32>, colour: bool) -> String {
     let ticks = "▁▂▃▄▅▆▇█";
+    let colour_red = match colour {
+        true => "\x0304",
+        false => "",
+    };
+    let colour_green = match colour {
+        true => "\x0303",
+        false => "",
+    };
+    let colour_esc = match colour {
+        true => "\x03",
+        false => "",
+    };
 
     /* XXX: This doesn't feel like idiomatic Rust */
     let mut min: f32 = f32_max;
@@ -788,26 +907,36 @@ fn graph(initial: f32, prices: Vec<f32>) -> String {
     };
 
     let mut v = String::new();
-    let mut count = 0;
-    for p in prices.iter() {
+    for (count, p) in prices.iter().enumerate() {
         let ratio = ((p - min) * ratio).round() as usize;
 
         if count == 0 {
             if p > &initial {
-                v.push_str(&format!("\x0303{}", ticks.chars().nth(ratio).unwrap()));
+                v.push_str(&format!(
+                    "{colour_green}{}{colour_esc}",
+                    ticks.chars().nth(ratio).unwrap()
+                ));
             } else {
-                v.push_str(&format!("\x0304{}\x03", ticks.chars().nth(ratio).unwrap()));
+                v.push_str(&format!(
+                    "{colour_red}{}{colour_esc}",
+                    ticks.chars().nth(ratio).unwrap()
+                ));
             }
         } else {
             // if the current price is higher than the previous price
             // the bar should be green, else red
             if p > &prices[count - 1] {
-                v.push_str(&format!("\x0303{}\x03", ticks.chars().nth(ratio).unwrap()));
+                v.push_str(&format!(
+                    "{colour_green}{}{colour_esc}",
+                    ticks.chars().nth(ratio).unwrap()
+                ));
             } else {
-                v.push_str(&format!("\x0304{}\x03", ticks.chars().nth(ratio).unwrap()));
+                v.push_str(&format!(
+                    "{colour_red}{}{colour_esc}",
+                    ticks.chars().nth(ratio).unwrap()
+                ));
             }
         }
-        count = count + 1;
     }
 
     v

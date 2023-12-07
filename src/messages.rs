@@ -88,7 +88,7 @@ pub async fn process_message(current_nick: &str, message: &Message, tx: mpsc::Se
 }
 
 async fn privmsg(msg: Msg, tx: mpsc::Sender<Bot>) {
-    if !msg.target.starts_with("#") {
+    if !msg.target.starts_with('#') {
         return;
     }
 
@@ -101,7 +101,7 @@ async fn privmsg(msg: Msg, tx: mpsc::Sender<Bot>) {
         .collect();
     tx.send(Bot::Links(urls)).await.unwrap();
 
-    if msg.content.contains("🥾") || msg.content.contains("👢") {
+    if msg.content.contains('🥾') || msg.content.contains('👢') {
         let y: f64 = random::<f64>();
         if y > 0.975 {
             let response = "https://www.youtube.com/watch?v=tfMcxmOBmpk".to_string();

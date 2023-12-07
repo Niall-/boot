@@ -215,7 +215,7 @@ impl Database {
         Ok(())
     }
 
-    pub fn check_coins(&self, coin: &str) -> Result<Option<Coin>, Error> {
+    pub fn _check_coins(&self, coin: &str) -> Result<Option<Coin>, Error> {
         let mut statement = self.db.prepare(
             "SELECT coin, date, data_0, data_1
             FROM coins

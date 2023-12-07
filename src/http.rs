@@ -53,7 +53,7 @@ pub struct Req {
 }
 
 impl Req {
-    pub fn head(&self, url: &str) -> RequestBuilder {
+    pub fn _head(&self, url: &str) -> RequestBuilder {
         self.client.head(url)
     }
     pub fn get(&self, url: &str) -> RequestBuilder {
@@ -65,7 +65,7 @@ impl Req {
             _ => 0,
         };
 
-        let body = self.get(&url).send().await?;
+        let body = self.get(url).send().await?;
 
         let mut stream = body.bytes_stream();
         let mut bytes = BytesMut::new();
