@@ -10,7 +10,6 @@ use openweathermap::CurrentWeather;
 use serde::{Deserialize, Deserializer};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::f32::MAX as f32_max;
 use std::str::FromStr;
 use std::time::Duration as STDDuration;
 use tokio::spawn;
@@ -27,6 +26,9 @@ enum Task<'a> {
     Location(&'a str),
     Coins(&'a str, &'a str),
     Lastfm(&'a str),
+    Hang(&'a str),
+    HangGuess(&'a str),
+    HangStart(&'a str),
 }
 
 fn process_commands<'a>(nick: &'a str, msg: &'a str) -> Task<'a> {
@@ -42,8 +44,8 @@ fn process_commands<'a>(nick: &'a str, msg: &'a str) -> Task<'a> {
             // some people like to say just '.' or '!' in irc so
             // we'll check the length to maker sure they're
             // actually trying to interact with the bot
-            c if (c.starts_with('.') && c.len() > 1) => c.strip_prefix('.'),
-            c if (c.starts_with('!') && c.len() > 1) => c.strip_prefix('!'),
+            c if c.starts_with('.') && c.len() > 1 => c.strip_prefix('.'),
+            c if c.starts_with('!') && c.len() > 1 => c.strip_prefix('!'),
             c if c.to_lowercase().starts_with(nick) => match tokens.next() {
                 Some(n) => Some(n),
                 None => Some("help"),
@@ -55,7 +57,22 @@ fn process_commands<'a>(nick: &'a str, msg: &'a str) -> Task<'a> {
     // if there's no '`boot:` help' or '`.`help' there's nothing
     // left to do, so continue with our day
     if bot_prefix.is_none() {
-        return Task::Ignore;
+        // todo: it's accepting short/medium/long here when it shouldn't
+        return match next {
+            Some(t) if tokens.count() == 0 => {
+                let letter = match t.trim().chars().next() {
+                    Some(x) if t.trim().len() == 1 && matches!(x, 'a'..='z') => true,
+                    _ => false,
+                };
+
+                if letter {
+                    Task::Hang(t.trim())
+                } else {
+                    Task::HangGuess(t.trim())
+                }
+            }
+            _ => Task::Ignore,
+        };
     }
 
     let coins = [
@@ -77,7 +94,8 @@ fn process_commands<'a>(nick: &'a str, msg: &'a str) -> Task<'a> {
             let response =
                 "Commands: repo | seen <nick> | tell <nick> <message> | weather <location> \
                         | loc <location> | <btc(gbp)|eth|ltc|xmr|doge> \
-                        <day|week|fortnight|month|year>";
+                        <day|week|fortnight|month|year> \
+                        | hang <short|medium|long>";
             Task::Message(response)
         }
         "repo" | "git" => Task::Message("https://github.com/niall-/boot"),
@@ -120,6 +138,9 @@ fn process_commands<'a>(nick: &'a str, msg: &'a str) -> Task<'a> {
                 "30d",
                 "month",
                 "year",
+                "1y",
+                "3y",
+                "5y",
                 "spot",
             ];
             let coin_time = match tokens.next() {
@@ -129,6 +150,8 @@ fn process_commands<'a>(nick: &'a str, msg: &'a str) -> Task<'a> {
                         "14d" | "2w" | "fortnight" | "fortnightly" => "14d",
                         "31d" | "30d" | "month" => "31d",
                         "year" => "1y",
+                        "3y" => "3y",
+                        "5y" => "5y",
                         _ => "1d",
                     }
                 }
@@ -140,6 +163,15 @@ fn process_commands<'a>(nick: &'a str, msg: &'a str) -> Task<'a> {
         "lastfm" => match tokens.next() {
             Some(nick) => Task::Lastfm(nick.trim()),
             None => Task::Message("noob"),
+        },
+        "hang" => match tokens.next() {
+            Some(l) => match l.trim().to_lowercase().as_ref() {
+                "short" => Task::HangStart("short"),
+                "medium" => Task::HangStart("medium"),
+                "long" => Task::HangStart("long"),
+                _ => Task::HangStart(""),
+            },
+            None => Task::HangStart(""),
         },
         _ => Task::Ignore,
     }
@@ -250,7 +282,7 @@ pub async fn process_messages(
                     let tx2 = tx2.clone();
                     let ftarget = msg.target.clone();
 
-                    tokio::spawn(async move {
+                    spawn(async move {
                         let weather = get_weather(&coords, &key).await;
                         match weather {
                             Ok(weather) => {
@@ -271,7 +303,7 @@ pub async fn process_messages(
                     let ftarget = msg.target.clone();
                     let fsource = msg.source.clone();
 
-                    tokio::spawn(async move {
+                    spawn(async move {
                         let fetched_location = get_location(&location).await;
                         #[allow(unused_assignments)]
                         let mut coords: Option<String> = None;
@@ -330,7 +362,7 @@ pub async fn process_messages(
                 let ftarget = msg.target.clone();
                 let response = format!("No coordinates found for {} in database", l);
                 println!("{}", response);
-                tokio::spawn(async move {
+                spawn(async move {
                     let fetched_location = get_location(&flocation).await;
                     match fetched_location {
                         Ok(Some(l)) => {
@@ -397,7 +429,7 @@ pub async fn process_messages(
             let ftarget = msg.target.clone();
             let tx2 = tx2.clone();
             let time_frame = t.to_string();
-            tokio::spawn(async move {
+            spawn(async move {
                 let coins = get_coins(coin, &time_frame).await;
                 match coins {
                     Ok(coins) => {
@@ -421,8 +453,27 @@ pub async fn process_messages(
             Ok(response) => client.send_privmsg(msg.target, response).unwrap(),
             Err(e) => client.send_privmsg(msg.target, e).unwrap(),
         },
+        Task::Hang(l) if msg.target == "#games" => {
+            tx2.send(Bot::Hang(msg.target, l.to_string()))
+                .await
+                .unwrap();
+        }
+        Task::HangGuess(w) if msg.target == "#games" => {
+            tx2.send(Bot::HangGuess(msg.target, w.to_string()))
+                .await
+                .unwrap();
+        }
+        Task::HangStart(l) if msg.target == "#games" => {
+            let target = if l.len() == 0 {
+                "<start>".to_string()
+            } else {
+                l.to_string()
+            };
+
+            tx2.send(Bot::HangGuess(msg.target, target)).await.unwrap();
+        }
         Task::Ignore => (),
-        //_ => (),
+        _ => (),
     }
 }
 
@@ -641,7 +692,7 @@ pub struct Coin {
 fn from_str<'de, D, T>(deserializer: D) -> Result<T, D::Error>
 where
     D: Deserializer<'de>,
-    T: std::str::FromStr,
+    T: FromStr,
     T::Err: std::fmt::Display,
 {
     let s: String = Deserialize::deserialize(deserializer)?;
@@ -649,11 +700,11 @@ where
 }
 
 #[derive(Debug, Deserialize)]
-struct OHLCData {
+struct OhlcData {
     time: i64,
     _open: String,
-    _high: String,
-    _low: String,
+    high: String,
+    low: String,
     _close: String,
     #[serde(deserialize_with = "from_str")]
     vwap: f32,
@@ -662,19 +713,18 @@ struct OHLCData {
 }
 
 #[derive(Debug, Deserialize)]
-struct OHLCResult {
+struct OhlcResult {
     #[serde(flatten)]
-    data: HashMap<String, Vec<OHLCData>>,
+    data: HashMap<String, Vec<OhlcData>>,
     #[serde(rename = "last")]
     _last: i64,
 }
 
-#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Deserialize)]
-struct OHLC {
+struct Ohlc {
     #[serde(rename = "error")]
     _error: Vec<String>,
-    result: OHLCResult,
+    result: OhlcResult,
 }
 
 #[derive(Debug, Deserialize)]
@@ -706,8 +756,7 @@ struct TickerResult {
 
 #[derive(Debug, Deserialize)]
 struct Ticker {
-    #[serde(rename = "error")]
-    _error: Vec<String>,
+    //#[serde(rename = "error")] _error: Vec<String>,
     result: TickerResult,
 }
 
@@ -737,6 +786,8 @@ pub async fn get_coins(coin: &str, time_frame: &str) -> Result<Coin, Error> {
         "14d" => (240, Utc::now() - Duration::days(14)),
         "31d" => (1440, Utc::now() - Duration::days(31)),
         "1y" => (21600, Utc::now() - Duration::days(365)),
+        "3y" => (21600, Utc::now() - Duration::days(1095)),
+        "5y" => (21600, Utc::now() - Duration::days(1825)),
         _ => (60, Utc::now() - Duration::hours(24)),
     };
 
@@ -747,9 +798,12 @@ pub async fn get_coins(coin: &str, time_frame: &str) -> Result<Coin, Error> {
     );
     let ticker_url = format!("https://api.kraken.com/0/public/Ticker?pair={coin}");
 
+    println!("ohlc: {ohlc_url}");
+    println!("ticker: {ticker_url}");
+
     let ohlc_page = Webpage::from_url(&ohlc_url, opt)?;
     let ticker_page = Webpage::from_url(&ticker_url, opt2)?;
-    let mut coin_json: OHLC = serde_json::from_str(&ohlc_page.html.text_content)?;
+    let mut coin_json: Ohlc = serde_json::from_str(&ohlc_page.html.text_content)?;
     let mut ticker_json: Ticker = serde_json::from_str(&ticker_page.html.text_content)?;
     let spot_time = Utc::now().timestamp();
 
@@ -790,6 +844,9 @@ pub async fn get_coins(coin: &str, time_frame: &str) -> Result<Coin, Error> {
             min = (c.vwap, count, c.time);
             max = (c.vwap, count, c.time);
         } else {
+            let high = c.high.parse::<f32>().unwrap_or(c.vwap);
+            let low = c.low.parse::<f32>().unwrap_or(c.vwap);
+
             match time_frame {
                 "14d" => {
                     if count % 2 == 0 {
@@ -801,10 +858,10 @@ pub async fn get_coins(coin: &str, time_frame: &str) -> Result<Coin, Error> {
                 }
                 _ => prices.push(c.vwap),
             }
-            if c.vwap > max.0 {
-                max = (c.vwap, count, c.time);
-            } else if c.vwap < min.0 {
-                min = (c.vwap, count, c.time);
+            if high > max.0 {
+                max = (high, count, c.time);
+            } else if low < min.0 {
+                min = (low, count, c.time);
             }
         }
         mean += c.vwap;
@@ -822,7 +879,7 @@ pub async fn get_coins(coin: &str, time_frame: &str) -> Result<Coin, Error> {
     }
     mean += spot;
 
-    let len = coins.len();
+    let len = coins.len() + 1;
     mean /= len as f32;
 
     let sign = match coin {
@@ -830,16 +887,22 @@ pub async fn get_coins(coin: &str, time_frame: &str) -> Result<Coin, Error> {
         _ => "$",
     };
 
-    let graph = graph(initial, prices, true);
-    let graph = format!(
-        "{coin} {sign}{} {} {graph} spot: {sign}{} {}",
-        coins[0].vwap,
-        print_date(coins[0].time, time_frame),
-        //coins[len - 1].vwap,
-        //print_date(coins[len - 1].time, time_frame),
-        spot,
-        print_date(spot_time, time_frame)
-    );
+    let colour = matches!(time_frame, "3y" | "5y");
+
+    let graph = graph(initial, prices, !colour);
+    let graph = if time_frame != "3y" && time_frame != "5y" {
+        format!(
+            "{coin} {sign}{} {} {graph} spot: {sign}{} {}",
+            coins[0].vwap,
+            print_date(coins[0].time, time_frame),
+            //coins[len - 1].vwap,
+            //print_date(coins[len - 1].time, time_frame),
+            spot,
+            print_date(spot_time, time_frame)
+        )
+    } else {
+        format!("{coin} {graph}")
+    };
 
     let stats = format!(
         "{coin} high: {sign}{} {} // mean: {sign}{mean} // low: {sign}{} {}",
@@ -864,7 +927,7 @@ fn print_date(date: i64, time_frame: &str) -> String {
     let time = NaiveDateTime::parse_from_str(&date.to_string(), "%s").unwrap();
     match time_frame {
         // 29-Nov-2023
-        "7d" | "14d" | "31d" | "1y" => time.format("(%d-%b-%Y)").to_string(),
+        "7d" | "14d" | "31d" | "1y" | "3y" | "5y" => time.format("(%d-%b-%Y)").to_string(),
         // Tue-05 02:00:00 UTC
         _ => time.format("(%a-%d %T UTC)").to_string(),
     }
@@ -888,14 +951,14 @@ fn graph(initial: f32, prices: Vec<f32>, colour: bool) -> String {
     };
 
     /* XXX: This doesn't feel like idiomatic Rust */
-    let mut min: f32 = f32_max;
+    let mut min: f32 = f32::MAX;
     let mut max: f32 = 0.0;
 
     for &i in prices.iter() {
         if i > max {
             max = i;
         }
-        if i < min {
+        if i < min && i > 0.0 {
             min = i;
         }
     }
@@ -911,7 +974,9 @@ fn graph(initial: f32, prices: Vec<f32>, colour: bool) -> String {
         let ratio = ((p - min) * ratio).round() as usize;
 
         if count == 0 {
-            if p > &initial {
+            if *p <= 0.001 {
+                v.push_str(" ");
+            } else if p > &initial {
                 v.push_str(&format!(
                     "{colour_green}{}{colour_esc}",
                     ticks.chars().nth(ratio).unwrap()
@@ -923,9 +988,11 @@ fn graph(initial: f32, prices: Vec<f32>, colour: bool) -> String {
                 ));
             }
         } else {
-            // if the current price is higher than the previous price
-            // the bar should be green, else red
-            if p > &prices[count - 1] {
+            if *p <= 0.001 {
+                v.push_str(" ");
+            } else if p > &prices[count - 1] {
+                // if the current price is higher than the previous price
+                // the bar should be green, else red
                 v.push_str(&format!(
                     "{colour_green}{}{colour_esc}",
                     ticks.chars().nth(ratio).unwrap()

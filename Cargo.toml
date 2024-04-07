@@ -29,3 +29,4 @@ toml = "0.5.8"
 rand = "0.8.5"
 urlencoding = "2.1.0"
 openweathermap = "0.2.4"
+time = { version = "0.3.30", features = [] }
