@@ -1,24 +1,30 @@
 use crate::bot::Coin;
 use failure::Error;
-use rusqlite::{params, Connection};
+use r2d2_sqlite::rusqlite::params;
+use r2d2_sqlite::SqliteConnectionManager;
 use serde::Deserialize;
 use std::path::Path;
 
+#[derive(Clone)]
 pub struct Database {
-    db: Connection,
+    db: r2d2::Pool<SqliteConnectionManager>,
 }
 
 impl Database {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, Error> {
-        let db = Connection::open(path)?;
-        db.execute(
+        let db = SqliteConnectionManager::file(path);
+        let db = r2d2::Pool::new(db)?;
+
+        let conn = db.get()?;
+
+        conn.execute(
             "CREATE TABLE IF NOT EXISTS seen (
             username    TEXT PRIMARY KEY,
             message     TEXT NOT NULL,
             time        TEXT NOT NULL)",
             [],
         )?;
-        db.execute(
+        conn.execute(
             "CREATE TABLE IF NOT EXISTS notifications (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             recipient   TEXT NOT NULL,
@@ -26,7 +32,7 @@ impl Database {
             message     TEXT NOT NULL)",
             [],
         )?;
-        db.execute(
+        conn.execute(
             "CREATE TABLE IF NOT EXISTS locations (
             loc         TEXT PRIMARY KEY,
             lat         TEXT NOT NULL,
@@ -35,14 +41,14 @@ impl Database {
             country     TEXT NOT NULL)",
             [],
         )?;
-        db.execute(
+        conn.execute(
             "CREATE TABLE IF NOT EXISTS weather (
             username    TEXT PRIMARY KEY,
             lat         TEXT NOT NULL,
             lon         TEXT NOT NULL)",
             [],
         )?;
-        db.execute(
+        conn.execute(
             "CREATE TABLE IF NOT EXISTS coins (
             coin        TEXT PRIMARY KEY,
             date        INTEGER NOT NULL,
@@ -54,7 +60,7 @@ impl Database {
     }
 
     pub fn add_seen(&self, entry: &Seen) -> Result<(), Error> {
-        self.db.execute(
+        self.db.get()?.execute(
             "INSERT INTO seen   (username, message, time)
             VALUES              (:username, :message, :time)
             ON CONFLICT (username) DO
@@ -66,7 +72,9 @@ impl Database {
     }
 
     pub fn check_seen(&self, nick: &str) -> Result<Option<Seen>, Error> {
-        let mut statement = self.db.prepare(
+        let conn = self.db.get()?;
+
+        let mut statement = conn.prepare(
             "SELECT username, message, time
             FROM seen
             WHERE username = :username
@@ -89,7 +97,7 @@ impl Database {
     }
 
     pub fn add_notification(&self, entry: &Notification) -> Result<(), Error> {
-        self.db.execute(
+        self.db.get()?.execute(
             "INSERT INTO notifications  (recipient, via, message)
             VALUES                      (:recipient, :via, :message)",
             params!(entry.recipient, entry.via, entry.message),
@@ -99,7 +107,7 @@ impl Database {
     }
 
     pub fn remove_notification(&self, id: u32) -> Result<(), Error> {
-        self.db.execute(
+        self.db.get()?.execute(
             "DELETE FROM notifications
             WHERE id = :id",
             params!(id),
@@ -109,7 +117,9 @@ impl Database {
     }
 
     pub fn check_notification(&self, nick: &str) -> Result<Vec<Notification>, Error> {
-        let mut statement = self.db.prepare(
+        let conn = self.db.get()?;
+
+        let mut statement = conn.prepare(
             "SELECT id, recipient, via, message
             FROM notifications
             WHERE recipient = :nick
@@ -133,7 +143,7 @@ impl Database {
     }
 
     pub fn add_location(&self, loc: &str, entry: &Location) -> Result<(), Error> {
-        self.db.execute(
+        self.db.get()?.execute(
             "INSERT INTO locations      (loc, lat, lon, city, country)
             VALUES                      (:loc, :lat, :lon, :city, :country)",
             params!(
@@ -149,7 +159,9 @@ impl Database {
     }
 
     pub fn check_location(&self, loc: &str) -> Result<Option<Location>, Error> {
-        let mut statement = self.db.prepare(
+        let conn = self.db.get()?;
+
+        let mut statement = conn.prepare(
             "SELECT lat, lon, city, country
             FROM locations
             WHERE loc = :loc
@@ -175,7 +187,7 @@ impl Database {
     }
 
     pub fn add_weather(&self, user: &str, lat: &str, lon: &str) -> Result<(), Error> {
-        self.db.execute(
+        self.db.get()?.execute(
             "INSERT INTO weather        (username, lat, lon)
             VALUES                      (:user, :lat, :lon)
             ON CONFLICT (username) DO
@@ -187,7 +199,9 @@ impl Database {
     }
 
     pub fn check_weather(&self, user: &str) -> Result<Option<(String, String)>, Error> {
-        let mut statement = self.db.prepare(
+        let conn = self.db.get()?;
+
+        let mut statement = conn.prepare(
             "SELECT lat, lon
             FROM weather
             WHERE username = :user
@@ -204,7 +218,7 @@ impl Database {
     }
 
     pub fn add_coins(&self, coin: &Coin) -> Result<(), Error> {
-        self.db.execute(
+        self.db.get()?.execute(
             "INSERT INTO coins      (coin, date, data_0, data_1)
             VALUES                  (:coin, :date, :data_0, :data_1)
             ON CONFLICT (coin) DO
@@ -216,7 +230,9 @@ impl Database {
     }
 
     pub fn _check_coins(&self, coin: &str) -> Result<Option<Coin>, Error> {
-        let mut statement = self.db.prepare(
+        let conn = self.db.get()?;
+
+        let mut statement = conn.prepare(
             "SELECT coin, date, data_0, data_1
             FROM coins
             WHERE coin = :coin",
@@ -254,13 +270,13 @@ pub struct Notification {
     pub message: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Address {
     pub city: Option<String>,
     pub country: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Location {
     pub lat: String,
     pub lon: String,
