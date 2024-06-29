@@ -1,19 +1,23 @@
+use crate::messages::Msg;
 use crate::sqlite::{Database, Location};
 use crate::{Bot, Notification, Req};
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use chrono_humanize::{Accuracy, HumanTime, Tense};
 use failure::{bail, err_msg, Error};
 use futures::future::try_join_all;
+use itertools::Itertools;
 use kuchiki::traits::*;
 use openweathermap::blocking::weather;
-use openweathermap::CurrentWeather;
+use openweathermap::{Clouds, CurrentWeather, Weather, Wind};
 use serde::{Deserialize, Deserializer};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fmt::Write;
 use std::str::FromStr;
 use std::time::Duration as STDDuration;
 use tokio::spawn;
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::Sender;
 use urlencoding::encode;
 use webpage::{Webpage, WebpageOptions};
 
@@ -29,6 +33,7 @@ enum Task<'a> {
     Hang(&'a str),
     HangGuess(&'a str),
     HangStart(&'a str),
+    Forecast(Option<&'a str>),
 }
 
 fn process_commands<'a>(nick: &'a str, msg: &'a str) -> Task<'a> {
@@ -115,6 +120,7 @@ fn process_commands<'a>(nick: &'a str, msg: &'a str) -> Task<'a> {
             Some(loc) if !loc.trim().is_empty() => Task::Weather(Some(loc.trim())),
             _ => Task::Weather(None),
         },
+        "forecast" => Task::Forecast(tokens.remainder().map(str::trim).filter(|v| !v.is_empty())),
         "loc" | "location" => match tokens.remainder() {
             Some(loc) if !loc.trim().is_empty() => Task::Location(loc.trim()),
             _ => Task::Message("Hint: loc|location <location>"),
@@ -235,118 +241,101 @@ pub async fn process_messages(
             let response = format!("Ok, I'll tell {} that", n);
             client.send_privmsg(msg.target, response).unwrap();
         }
+        Task::Forecast(l) => {
+            let Some(key) = api_key.clone() else {
+                return;
+            };
+
+            let tx2 = tx2.clone();
+            let ftarget = msg.target.clone();
+            let db = db.clone();
+            let l = l.map(|v| v.to_string());
+
+            spawn(async move {
+                let (lat, lon) = match get_or_set_user_location(&db, &msg, l.as_deref(), &tx2).await
+                {
+                    Ok(Some(v)) => v,
+                    Ok(None) => {
+                        tx2.send(Bot::Privmsg(
+                            ftarget,
+                            "tell me where you are please mate".to_string(),
+                        ))
+                        .await
+                        .unwrap();
+                        return;
+                    }
+                    Err(e) => {
+                        eprintln!("failed to get weather: {e}");
+                        tx2.send(Bot::Privmsg(
+                            ftarget,
+                            "couldn't muster it sorry mate".to_string(),
+                        ))
+                        .await
+                        .unwrap();
+                        return;
+                    }
+                };
+
+                match get_forecast(&lat, &lon, &key).await {
+                    Ok(weather) => {
+                        let pretty = print_forecast(weather);
+                        let _res = tx2.send(Bot::Privmsg(ftarget, pretty)).await;
+                    }
+                    Err(err) => {
+                        println!("weather isn't initialised: {}", err);
+                    }
+                }
+            });
+        }
         // TODO: figure out the borrowowing issue(s?) so code doesn't have to be
         // duplicated as much here, and especially so that it can be
         // separated out into its own functions
         Task::Weather(l) => {
-            if api_key.is_none() {
+            let Some(key) = api_key.clone() else {
                 return;
-            }
-            let key = api_key.as_ref().unwrap().clone();
+            };
 
-            let mut location = String::new();
-            let mut coords: Option<String> = None;
+            let tx2 = tx2.clone();
+            let db = db.clone();
+            let msg = msg.clone();
+            let ftarget = msg.target.clone();
+            let l = l.map(|v| v.to_string());
 
-            match l {
-                // check to see if we have the location already stored
-                None => match db.check_weather(&msg.source) {
-                    Ok(Some((lat, lon))) => coords = Some(format!("{},{}", lat, lon)),
+            spawn(async move {
+                let (lat, lon) = match get_or_set_user_location(&db, &msg, l.as_deref(), &tx2).await
+                {
+                    Ok(Some(v)) => v,
                     Ok(None) => {
-                        let response = "Hint: weather <location>".to_string();
-                        client.send_privmsg(&msg.target, response).unwrap();
+                        tx2.send(Bot::Privmsg(
+                            ftarget,
+                            "tell me where you are please mate".to_string(),
+                        ))
+                        .await
+                        .unwrap();
                         return;
                     }
-                    Err(err) => println!("Error checking weather: {}", err),
-                },
+                    Err(e) => {
+                        eprintln!("failed to get weather: {e}");
+                        tx2.send(Bot::Privmsg(
+                            ftarget,
+                            "couldn't muster it sorry mate".to_string(),
+                        ))
+                        .await
+                        .unwrap();
+                        return;
+                    }
+                };
 
-                // update user's weather preference and fetch coordinates
-                Some(l) => {
-                    location = l.to_string();
-                    let loc = db.check_location(l);
-                    match loc {
-                        Ok(Some(l)) => {
-                            coords = Some(format!("{},{}", &l.lat, &l.lon));
-                            tx2.send(Bot::UpdateWeather(msg.source.clone(), l.lat, l.lon))
-                                .await
-                                .unwrap();
-                        }
-                        Ok(None) => (),
-                        Err(err) => println!("Error checking location: {}", err),
+                match get_weather(&format!("{lat},{lon}"), &key).await {
+                    Ok(weather) => {
+                        let pretty = print_weather(weather);
+                        tx2.send(Bot::Privmsg(ftarget, pretty)).await.unwrap();
+                    }
+                    Err(err) => {
+                        println!("weather isn't initialised: {err}");
                     }
                 }
-            }
-
-            match coords {
-                // we have the coords already, all we need now is the weather
-                Some(coords) => {
-                    let tx2 = tx2.clone();
-                    let ftarget = msg.target.clone();
-
-                    spawn(async move {
-                        let weather = get_weather(&coords, &key).await;
-                        match weather {
-                            Ok(weather) => {
-                                let pretty = print_weather(weather);
-                                tx2.send(Bot::Privmsg(ftarget, pretty)).await.unwrap();
-                            }
-                            Err(err) => {
-                                println!("weather isn't initialised: {}", err);
-                            }
-                        }
-                    });
-                }
-
-                // we don't have coords for the location
-                // this is the worst case scenario
-                None => {
-                    let tx2 = tx2.clone();
-                    let ftarget = msg.target.clone();
-                    let fsource = msg.source.clone();
-
-                    spawn(async move {
-                        let fetched_location = get_location(&location).await;
-                        #[allow(unused_assignments)]
-                        let mut coords: Option<String> = None;
-
-                        match fetched_location {
-                            Ok(Some(l)) => {
-                                let lat = l.lat.clone();
-                                let lon = l.lon.clone();
-
-                                coords = Some(format!("{},{}", &lat, &lon));
-
-                                tx2.send(Bot::UpdateWeather(fsource, lat, lon))
-                                    .await
-                                    .unwrap();
-                                tx2.send(Bot::UpdateLocation(location, l)).await.unwrap();
-                            }
-
-                            Ok(None) => {
-                                let response = format!("Unable to fetch location for {}", location);
-                                println!("{}", &response);
-                                tx2.send(Bot::Privmsg(ftarget, response)).await.unwrap();
-                                return;
-                            }
-                            Err(err) => {
-                                println!("Error fetching location data: {}", err);
-                                return;
-                            }
-                        }
-
-                        match get_weather(&coords.unwrap(), &key).await {
-                            //let weather = get_weather(&lcoords.unwrap(), &key).await;
-                            //match weather {
-                            Ok(weather) => {
-                                let pretty = print_weather(weather);
-                                tx2.send(Bot::Privmsg(ftarget, pretty)).await.unwrap();
-                            }
-                            Err(err) => {
-                                println!("weather isn't initialised: {}", err);
-                            }
-                        }
-                    });
-                }
-            }
+            });
         }
         Task::Location(l) => match db.check_location(l) {
             Ok(Some(l)) => {
@@ -477,6 +466,49 @@ pub async fn process_messages(
     }
 }
 
+pub async fn get_or_set_user_location(
+    db: &Database,
+    msg: &Msg,
+    location: Option<&str>,
+    tx: &Sender<Bot>,
+) -> Result<Option<(String, String)>, Error> {
+    if let Some(location) = location {
+        if let Some(coords) = db.check_location(location)? {
+            let _res = tx
+                .send(Bot::UpdateWeather(
+                    msg.source.clone(),
+                    coords.lat.to_string(),
+                    coords.lon.to_string(),
+                ))
+                .await;
+            return Ok(Some((coords.lat, coords.lon)));
+        }
+
+        let Some(loc) = get_location(&location).await? else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "sorry mate i have nfi where you are",
+            )
+            .into());
+        };
+
+        let _res = tokio::try_join!(
+            tx.send(Bot::UpdateWeather(
+                msg.source.to_string(),
+                loc.lat.to_string(),
+                loc.lon.to_string()
+            )),
+            tx.send(Bot::UpdateLocation(location.to_string(), loc.clone())),
+        );
+
+        Ok(Some((loc.lat, loc.lon)))
+    } else if let Some((lat, lon)) = db.check_weather(&msg.source)? {
+        Ok(Some((lat, lon)))
+    } else {
+        Ok(None)
+    }
+}
+
 pub async fn process_titles(links: Vec<(String, String)>, req: Req) -> Vec<(String, String)> {
     // the following is adapted from
     // https://stackoverflow.com/questions/63434977/how-can-i-spawn-asynchronous-methods-in-a-loop
@@ -598,6 +630,110 @@ pub async fn get_weather(coords: &str, api_key: &str) -> Result<CurrentWeather, 
     let w: CurrentWeather = weather(coords, "metric", "en", api_key)?;
 
     Ok(w)
+}
+
+pub async fn get_forecast(lat: &str, lon: &str, api_key: &str) -> Result<Forecast, String> {
+    eprintln!("https://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={api_key}&units=metric");
+
+    reqwest::get(format!("https://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={api_key}&units=metric"))
+        .await
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[derive(Deserialize)]
+pub struct Forecast {
+    list: Vec<ForecastItem>,
+    city: City,
+}
+
+#[derive(Deserialize)]
+#[allow(unused)]
+pub struct ForecastItem {
+    main: MainForecast,
+    weather: Vec<Weather>,
+    clouds: Clouds,
+    wind: Wind,
+    // visibility: u64,
+    pop: f32,
+    #[serde(default)]
+    rain: HashMap<String, f32>,
+    dt_txt: String,
+}
+
+#[derive(Deserialize)]
+#[allow(unused)]
+pub struct MainForecast {
+    temp: f32,
+    feels_like: f32,
+    temp_min: f32,
+    pressure: u16,
+    sea_level: u16,
+    grnd_level: u16,
+    humidity: u16,
+    temp_kf: f32,
+}
+
+#[derive(Deserialize)]
+pub struct City {
+    name: String,
+    country: String,
+}
+
+pub fn print_forecast(weather: Forecast) -> String {
+    let mut builder = String::new();
+
+    write!(
+        builder,
+        "Forecast for {}, {}: ",
+        weather.city.name, weather.city.country
+    )
+    .unwrap();
+
+    for (i, (first, second)) in weather.list.iter().tuples().take(3).enumerate() {
+        if i > 0 {
+            builder.push_str(". ");
+        }
+
+        let Some(first_time) = first.dt_txt.split_whitespace().skip(1).next() else {
+            continue;
+        };
+
+        let Some(second_time) = first.dt_txt.split_whitespace().skip(1).next() else {
+            continue;
+        };
+
+        write!(
+            builder,
+            "{}-{}: {}, {}°C to {}°C",
+            (friendly_time)(first_time),
+            (friendly_time)(second_time),
+            second.weather[0].description,
+            ((first.main.temp_min + second.main.temp) / 2.0).round(),
+            ((first.main.temp + second.main.temp) / 2.0).round(),
+        )
+        .unwrap();
+
+        let precip = first.rain.get("3h").copied().unwrap_or_default()
+            + second.rain.get("3h").copied().unwrap_or_default();
+        if precip > 0.0 {
+            write!(builder, " {}mm precipitation", precip).unwrap();
+        }
+
+        if (f32::from(second.main.humidity) * 1.2) > f32::from(first.main.humidity) {
+            write!(builder, " humidity increasing to {}%", second.main.humidity).unwrap();
+        } else if (f32::from(first.main.humidity) * 1.2) > f32::from(second.main.humidity) {
+            write!(builder, " humidity decreasing to {}%", second.main.humidity).unwrap();
+        }
+    }
+
+    builder
+}
+
+fn friendly_time(s: &str) -> &str {
+    s.rsplitn(1, ":").next().unwrap()
 }
 
 pub fn print_weather(weather: CurrentWeather) -> String {
